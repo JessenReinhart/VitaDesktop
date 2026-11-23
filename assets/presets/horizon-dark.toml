@@ -1,0 +1,47 @@
+preset = "HorizonDark"
+theme_mode = "Dark"
+accent = "Lilac"
+surface_material = "Matte"
+hide_native_taskbar = true
+
+[top_bar]
+style = "FloatingPills"
+height = 46
+show_seconds = false
+
+[dock]
+icon_size = 48
+magnification_scale = 1.38
+max_magnify_radius = 128.0
+show_space_chip = true
+show_resume_chip = true
+auto_hide = false
+
+[[dock.pinned_apps]]
+name = "Files"
+target = "explorer.exe"
+exe_name = "explorer.exe"
+
+[[dock.pinned_apps]]
+name = "Edge"
+target = "msedge.exe"
+exe_name = "msedge.exe"
+
+[[dock.pinned_apps]]
+name = "Terminal"
+target = "wt.exe"
+exe_name = "WindowsTerminal.exe"
+
+[[dock.pinned_apps]]
+name = "Notepad"
+target = "notepad.exe"
+exe_name = "notepad.exe"
+
+[[dock.pinned_apps]]
+name = "Settings"
+target = "ms-settings:"
+exe_name = "SystemSettings.exe"
+
+[accessibility]
+reduce_motion = false
+increase_contrast = false

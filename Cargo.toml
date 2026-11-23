@@ -1,0 +1,32 @@
+[workspace]
+members = [
+    "crates/vita-core",
+    "crates/vita-win32",
+    "crates/vita-shell",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["VitaDesktop Contributors"]
+
+[workspace.dependencies]
+iced = { version = "0.14", features = ["wgpu", "tiny-skia", "svg", "image", "tokio", "advanced"] }
+windows = "0.62"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+notify = "8"
+directories = "6"
+chrono = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+opt-level = 3

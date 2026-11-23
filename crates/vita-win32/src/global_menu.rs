@@ -1,0 +1,749 @@
+use crate::decorator::{
+    is_window_always_on_top, minimize_window, toggle_always_on_top, toggle_maximize_window,
+};
+use crate::windows::{close_window, launch_target, process_exe_info};
+use crate::workspaces::switch_to_space;
+use std::ffi::c_void;
+use std::sync::mpsc::{self, Sender};
+use std::thread::JoinHandle;
+use tokio::sync::mpsc::UnboundedSender;
+use vita_core::{
+    ActiveAppMenu, GlobalMenuAction, GlobalMenuCategory, GlobalMenuItem, WindowMenuAction,
+};
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::System::Com::{
+    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
+};
+use windows::Win32::System::Variant::VARIANT;
+use windows::Win32::UI::Accessibility::{
+    CUIAutomation, ExpandCollapseState_Collapsed, IUIAutomation, IUIAutomationElement,
+    IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern, TreeScope_Children,
+    TreeScope_Subtree, UIA_ControlTypePropertyId, UIA_ExpandCollapsePatternId,
+    UIA_InvokePatternId, UIA_MenuBarControlTypeId, UIA_MenuItemControlTypeId,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetMenu, GetMenuItemCount, GetMenuItemInfoW, GetSubMenu, GetWindowTextLengthW,
+    GetWindowTextW, GetWindowThreadProcessId, HMENU, IsWindow, IsZoomed, MENUITEMINFOW,
+    MFS_CHECKED, MFS_DISABLED, MFT_SEPARATOR, MIIM_FTYPE, MIIM_ID, MIIM_STATE, MIIM_STRING,
+    MIIM_SUBMENU, PostMessageW, SetForegroundWindow, WM_COMMAND,
+};
+use windows::core::{BSTR, PWSTR};
+
+const MAX_TOP_MENUS: usize = 7;
+
+enum GlobalMenuCmd {
+    Inspect { hwnd: isize, monitor_idx: usize },
+    LoadSubmenu { hwnd: isize, menu_index: usize },
+    Invoke(GlobalMenuAction, usize),
+    Shutdown,
+}
+
+/// STA COM worker extracting Win32 `HMENU` and Windows UI Automation (`IUIAutomation`) menu bars
+/// for the focused external application.
+pub struct GlobalMenuWorker {
+    cmd_tx: Sender<GlobalMenuCmd>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl GlobalMenuWorker {
+    pub fn start(out_tx: UnboundedSender<Option<ActiveAppMenu>>) -> Self {
+        let (cmd_tx, cmd_rx) = mpsc::channel::<GlobalMenuCmd>();
+        let thread = std::thread::Builder::new()
+            .name("vita-global-menu".into())
+            .spawn(move || {
+                unsafe {
+                    let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+                }
+                let uia: Option<IUIAutomation> =
+                    unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }.ok();
+
+                let mut current_menu: Option<ActiveAppMenu> = None;
+                let mut uia_top_items: Vec<IUIAutomationElement> = Vec::new();
+                let mut uia_cached_subitems: Vec<Vec<IUIAutomationElement>> = Vec::new();
+
+                while let Ok(mut cmd) = cmd_rx.recv() {
+                    // Coalesce bursts of rapid foreground switches to the newest request.
+                    while let Ok(newer) = cmd_rx.try_recv() {
+                        match (&cmd, &newer) {
+                            (GlobalMenuCmd::Inspect { .. }, GlobalMenuCmd::Inspect { .. }) => {
+                                cmd = newer;
+                            }
+                            _ => {
+                                handle_menu_cmd(
+                                    cmd,
+                                    uia.as_ref(),
+                                    &out_tx,
+                                    &mut current_menu,
+                                    &mut uia_top_items,
+                                    &mut uia_cached_subitems,
+                                );
+                                cmd = newer;
+                            }
+                        }
+                    }
+
+                    if matches!(cmd, GlobalMenuCmd::Shutdown) {
+                        break;
+                    }
+
+                    handle_menu_cmd(
+                        cmd,
+                        uia.as_ref(),
+                        &out_tx,
+                        &mut current_menu,
+                        &mut uia_top_items,
+                        &mut uia_cached_subitems,
+                    );
+                }
+
+                drop(uia_cached_subitems);
+                drop(uia_top_items);
+                drop(uia);
+                unsafe {
+                    CoUninitialize();
+                }
+            })
+            .ok();
+
+        Self { cmd_tx, thread }
+    }
+
+    pub fn inspect_window(&self, hwnd: isize, monitor_idx: usize) {
+        let _ = self.cmd_tx.send(GlobalMenuCmd::Inspect { hwnd, monitor_idx });
+    }
+
+    pub fn load_submenu(&self, hwnd: isize, menu_index: usize) {
+        let _ = self
+            .cmd_tx
+            .send(GlobalMenuCmd::LoadSubmenu { hwnd, menu_index });
+    }
+
+    pub fn invoke(&self, action: GlobalMenuAction, current_space_idx: usize) {
+        let _ = self
+            .cmd_tx
+            .send(GlobalMenuCmd::Invoke(action, current_space_idx));
+    }
+}
+
+impl Drop for GlobalMenuWorker {
+    fn drop(&mut self) {
+        let _ = self.cmd_tx.send(GlobalMenuCmd::Shutdown);
+        if let Some(handle) = self.thread.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn handle_menu_cmd(
+    cmd: GlobalMenuCmd,
+    uia: Option<&IUIAutomation>,
+    out_tx: &UnboundedSender<Option<ActiveAppMenu>>,
+    current_menu: &mut Option<ActiveAppMenu>,
+    uia_top_items: &mut Vec<IUIAutomationElement>,
+    uia_cached_subitems: &mut Vec<Vec<IUIAutomationElement>>,
+) {
+    match cmd {
+        GlobalMenuCmd::Shutdown => {}
+        GlobalMenuCmd::Inspect { hwnd, monitor_idx } => {
+            uia_top_items.clear();
+            uia_cached_subitems.clear();
+
+            if hwnd == 0 || !unsafe { IsWindow(Some(HWND(hwnd as *mut c_void))) }.as_bool() {
+                *current_menu = None;
+                let _ = out_tx.send(None);
+                return;
+            }
+
+            let built = build_active_app_menu(
+                HWND(hwnd as *mut c_void),
+                monitor_idx,
+                uia,
+                uia_top_items,
+            );
+            uia_cached_subitems.resize_with(uia_top_items.len(), Vec::new);
+            *current_menu = built.clone();
+            let _ = out_tx.send(built);
+        }
+        GlobalMenuCmd::LoadSubmenu { hwnd, menu_index } => {
+            let Some(menu) = current_menu.as_mut() else {
+                return;
+            };
+            if menu.hwnd != hwnd {
+                return;
+            }
+            let Some(cat) = menu.categories.get_mut(menu_index) else {
+                return;
+            };
+            if cat.loaded {
+                return;
+            }
+            let Some(uia_idx) = cat.lazy_uia_index else {
+                return;
+            };
+            let (Some(auto), Some(top_el)) = (uia, uia_top_items.get(uia_idx)) else {
+                cat.loaded = true;
+                return;
+            };
+
+            let (items, elements) = extract_uia_submenu_items(hwnd, menu_index, auto, top_el);
+            cat.items = items;
+            cat.loaded = true;
+            if let Some(slot) = uia_cached_subitems.get_mut(uia_idx) {
+                *slot = elements;
+            }
+            let _ = out_tx.send(Some(menu.clone()));
+        }
+        GlobalMenuCmd::Invoke(action, current_space_idx) => {
+            execute_global_menu_action(action, current_space_idx, current_menu, uia_cached_subitems);
+        }
+    }
+}
+
+fn execute_global_menu_action(
+    action: GlobalMenuAction,
+    current_space_idx: usize,
+    current_menu: &Option<ActiveAppMenu>,
+    uia_cached_subitems: &[Vec<IUIAutomationElement>],
+) {
+    match action {
+        GlobalMenuAction::Win32Command { hwnd, command_id } => {
+            let h = HWND(hwnd as *mut c_void);
+            if unsafe { IsWindow(Some(h)) }.as_bool() {
+                unsafe {
+                    let _ = SetForegroundWindow(h);
+                    let _ = PostMessageW(Some(h), WM_COMMAND, WPARAM(command_id as usize), LPARAM(0));
+                }
+            }
+        }
+        GlobalMenuAction::UiaInvoke {
+            hwnd,
+            menu_index,
+            item_index,
+        } => {
+            let h = HWND(hwnd as *mut c_void);
+            if !unsafe { IsWindow(Some(h)) }.as_bool() {
+                return;
+            }
+            unsafe {
+                let _ = SetForegroundWindow(h);
+            }
+            if let Some(menu) = current_menu
+                && let Some(cat) = menu.categories.get(menu_index)
+                && let Some(uia_idx) = cat.lazy_uia_index
+                && let Some(el) = uia_cached_subitems.get(uia_idx).and_then(|v| v.get(item_index))
+            {
+                if let Ok(inv_pat) = unsafe { el.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId) } {
+                    let _ = unsafe { inv_pat.Invoke() };
+                } else if let Ok(exp_pat) =
+                    unsafe { el.GetCurrentPatternAs::<IUIAutomationExpandCollapsePattern>(UIA_ExpandCollapsePatternId) }
+                {
+                    let _ = unsafe { exp_pat.Expand() };
+                }
+            }
+        }
+        GlobalMenuAction::WindowAction(win_act) => match win_act {
+            WindowMenuAction::NewWindow { exe_path } => launch_target(&exe_path),
+            WindowMenuAction::Minimize(hwnd) => minimize_window(hwnd),
+            WindowMenuAction::ToggleMaximize(hwnd) => toggle_maximize_window(hwnd),
+            WindowMenuAction::ToggleAlwaysOnTop(hwnd) => toggle_always_on_top(hwnd),
+            WindowMenuAction::MoveToNextSpace(_hwnd) => {
+                switch_to_space(current_space_idx, current_space_idx + 1);
+            }
+            WindowMenuAction::QuitApp(hwnd) => close_window(hwnd),
+        },
+    }
+}
+
+fn build_active_app_menu(
+    hwnd: HWND,
+    monitor_idx: usize,
+    uia: Option<&IUIAutomation>,
+    uia_top_items: &mut Vec<IUIAutomationElement>,
+) -> Option<ActiveAppMenu> {
+    let mut pid = 0u32;
+    unsafe {
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    }
+    let (exe_path, exe_name) = process_exe_info(pid);
+    let title = read_hwnd_title(hwnd);
+    let app_name = friendly_app_name(&exe_name, &title);
+
+    let mut categories = vec![build_universal_app_category(
+        hwnd.0 as isize,
+        &app_name,
+        &exe_path,
+    )];
+
+    let hmenu = unsafe { GetMenu(hwnd) };
+    if !hmenu.is_invalid() && !hmenu.0.is_null() {
+        categories.extend(extract_win32_hmenu(hwnd.0 as isize, hmenu));
+    } else if let Some(auto) = uia {
+        categories.extend(extract_uia_top_menus(auto, hwnd, uia_top_items));
+    }
+
+    Some(ActiveAppMenu {
+        hwnd: hwnd.0 as isize,
+        app_name,
+        exe_path,
+        monitor_idx,
+        categories,
+    })
+}
+
+fn build_universal_app_category(
+    hwnd: isize,
+    app_name: &str,
+    exe_path: &str,
+) -> GlobalMenuCategory {
+    let is_max = unsafe { IsZoomed(HWND(hwnd as *mut c_void)) }.as_bool();
+    let is_top = is_window_always_on_top(hwnd);
+
+    let items = vec![
+        GlobalMenuItem {
+            label: format!("New {app_name} Window"),
+            shortcut: None,
+            enabled: !exe_path.trim().is_empty(),
+            checked: false,
+            is_separator: false,
+            action: Some(GlobalMenuAction::WindowAction(WindowMenuAction::NewWindow {
+                exe_path: exe_path.to_string(),
+            })),
+        },
+        separator_item(),
+        GlobalMenuItem {
+            label: "Minimize".to_string(),
+            shortcut: None,
+            enabled: true,
+            checked: false,
+            is_separator: false,
+            action: Some(GlobalMenuAction::WindowAction(WindowMenuAction::Minimize(hwnd))),
+        },
+        GlobalMenuItem {
+            label: if is_max {
+                "Restore Size".to_string()
+            } else {
+                "Maximize".to_string()
+            },
+            shortcut: None,
+            enabled: true,
+            checked: false,
+            is_separator: false,
+            action: Some(GlobalMenuAction::WindowAction(WindowMenuAction::ToggleMaximize(hwnd))),
+        },
+        GlobalMenuItem {
+            label: "Always on Top".to_string(),
+            shortcut: None,
+            enabled: true,
+            checked: is_top,
+            is_separator: false,
+            action: Some(GlobalMenuAction::WindowAction(WindowMenuAction::ToggleAlwaysOnTop(hwnd))),
+        },
+        GlobalMenuItem {
+            label: "Move to Next Space".to_string(),
+            shortcut: None,
+            enabled: true,
+            checked: false,
+            is_separator: false,
+            action: Some(GlobalMenuAction::WindowAction(WindowMenuAction::MoveToNextSpace(hwnd))),
+        },
+        separator_item(),
+        GlobalMenuItem {
+            label: format!("Quit {app_name}"),
+            shortcut: Some("Alt+F4".to_string()),
+            enabled: true,
+            checked: false,
+            is_separator: false,
+            action: Some(GlobalMenuAction::WindowAction(WindowMenuAction::QuitApp(hwnd))),
+        },
+    ];
+
+    GlobalMenuCategory {
+        label: app_name.to_string(),
+        items,
+        lazy_uia_index: None,
+        loaded: true,
+    }
+}
+
+fn extract_win32_hmenu(hwnd: isize, hmenu: HMENU) -> Vec<GlobalMenuCategory> {
+    let count = unsafe { GetMenuItemCount(Some(hmenu)) };
+    if count <= 0 {
+        return Vec::new();
+    }
+
+    let mut categories = Vec::new();
+    let cap = (count as usize).min(MAX_TOP_MENUS);
+    for idx in 0..cap {
+        let Some((raw_label, _, _, _, _, sub)) = read_menu_item_info(hmenu, idx as u32) else {
+            continue;
+        };
+        let (label, _) = parse_menu_label(&raw_label);
+        if label.trim().is_empty() {
+            continue;
+        }
+        let items = if !sub.is_invalid() && !sub.0.is_null() {
+            extract_win32_submenu_items(hwnd, sub)
+        } else {
+            Vec::new()
+        };
+        categories.push(GlobalMenuCategory {
+            label,
+            items,
+            lazy_uia_index: None,
+            loaded: true,
+        });
+    }
+    categories
+}
+
+fn extract_win32_submenu_items(hwnd: isize, sub: HMENU) -> Vec<GlobalMenuItem> {
+    let count = unsafe { GetMenuItemCount(Some(sub)) };
+    if count <= 0 {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for idx in 0..(count as usize).min(36) {
+        let Some((raw, id, is_sep, enabled, checked, nested)) = read_menu_item_info(sub, idx as u32)
+        else {
+            continue;
+        };
+        if is_sep {
+            if !out.is_empty() && !out.last().is_some_and(|m: &GlobalMenuItem| m.is_separator) {
+                out.push(separator_item());
+            }
+            continue;
+        }
+        let (label, shortcut) = parse_menu_label(&raw);
+        if label.trim().is_empty() {
+            continue;
+        }
+        let has_nested = !nested.is_invalid() && !nested.0.is_null();
+        out.push(GlobalMenuItem {
+            label: if has_nested {
+                format!("{label}  ›")
+            } else {
+                label
+            },
+            shortcut,
+            enabled: enabled && !has_nested && id != 0,
+            checked,
+            is_separator: false,
+            action: (!has_nested && id != 0)
+                .then_some(GlobalMenuAction::Win32Command { hwnd, command_id: id }),
+        });
+    }
+    if out.last().is_some_and(|i| i.is_separator) {
+        out.pop();
+    }
+    out
+}
+
+fn read_menu_item_info(
+    menu: HMENU,
+    pos: u32,
+) -> Option<(String, u32, bool, bool, bool, HMENU)> {
+    let mut buf = [0u16; 128];
+    let mut info = MENUITEMINFOW {
+        cbSize: std::mem::size_of::<MENUITEMINFOW>() as u32,
+        fMask: MIIM_FTYPE | MIIM_STATE | MIIM_ID | MIIM_SUBMENU | MIIM_STRING,
+        dwTypeData: PWSTR(buf.as_mut_ptr()),
+        cch: buf.len() as u32,
+        ..Default::default()
+    };
+    if unsafe { GetMenuItemInfoW(menu, pos, true, &mut info) }.is_err() {
+        return None;
+    }
+    let is_sep = (info.fType.0 & MFT_SEPARATOR.0) != 0;
+    let enabled = (info.fState.0 & MFS_DISABLED.0) == 0;
+    let checked = (info.fState.0 & MFS_CHECKED.0) != 0;
+    let sub = unsafe { GetSubMenu(menu, pos as i32) };
+    let text = if is_sep {
+        String::new()
+    } else {
+        let len = (info.cch as usize).min(buf.len());
+        String::from_utf16_lossy(&buf[..len])
+    };
+    Some((text, info.wID, is_sep, enabled, checked, sub))
+}
+
+fn extract_uia_top_menus(
+    auto: &IUIAutomation,
+    hwnd: HWND,
+    uia_top_items: &mut Vec<IUIAutomationElement>,
+) -> Vec<GlobalMenuCategory> {
+    let Ok(root) = (unsafe { auto.ElementFromHandle(hwnd) }) else {
+        return Vec::new();
+    };
+    let Ok(menubar_cond) = (unsafe {
+        auto.CreatePropertyCondition(
+            UIA_ControlTypePropertyId,
+            &VARIANT::from(UIA_MenuBarControlTypeId.0),
+        )
+    }) else {
+        return Vec::new();
+    };
+    let Ok(bars) = (unsafe { root.FindAll(TreeScope_Subtree, &menubar_cond) }) else {
+        return Vec::new();
+    };
+    let Ok(bar_len) = (unsafe { bars.Length() }) else {
+        return Vec::new();
+    };
+    let Ok(item_cond) = (unsafe {
+        auto.CreatePropertyCondition(
+            UIA_ControlTypePropertyId,
+            &VARIANT::from(UIA_MenuItemControlTypeId.0),
+        )
+    }) else {
+        return Vec::new();
+    };
+
+    for b in 0..bar_len {
+        let Ok(bar) = (unsafe { bars.GetElement(b) }) else {
+            continue;
+        };
+        let auto_id = unsafe { bar.CurrentAutomationId() }
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let name = unsafe { bar.CurrentName() }
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        if auto_id.eq_ignore_ascii_case("SystemMenuBar")
+            || name.eq_ignore_ascii_case("System")
+        {
+            continue;
+        }
+
+        let Ok(items) = (unsafe { bar.FindAll(TreeScope_Children, &item_cond) }) else {
+            continue;
+        };
+        let Ok(ilen) = (unsafe { items.Length() }) else {
+            continue;
+        };
+        if ilen <= 0 {
+            continue;
+        }
+
+        let mut categories = Vec::new();
+        for idx in 0..ilen {
+            if categories.len() >= MAX_TOP_MENUS {
+                break;
+            }
+            let Ok(item) = (unsafe { items.GetElement(idx) }) else {
+                continue;
+            };
+            let raw_name = unsafe { item.CurrentName() }
+                .map(|s: BSTR| s.to_string())
+                .unwrap_or_default();
+            let (label, _) = parse_menu_label(&raw_name);
+            let trimmed = label.trim();
+            if trimmed.is_empty()
+                || trimmed.eq_ignore_ascii_case("System")
+                || trimmed.eq_ignore_ascii_case("Application")
+            {
+                continue;
+            }
+            let uia_idx = uia_top_items.len();
+            uia_top_items.push(item);
+            categories.push(GlobalMenuCategory {
+                label: trimmed.to_string(),
+                items: Vec::new(),
+                lazy_uia_index: Some(uia_idx),
+                loaded: false,
+            });
+        }
+        if !categories.is_empty() {
+            return categories;
+        }
+    }
+
+    Vec::new()
+}
+
+fn extract_uia_submenu_items(
+    hwnd: isize,
+    menu_index: usize,
+    auto: &IUIAutomation,
+    top_item: &IUIAutomationElement,
+) -> (Vec<GlobalMenuItem>, Vec<IUIAutomationElement>) {
+    let mut expanded_here = false;
+    if let Ok(exp_pat) = unsafe {
+        top_item.GetCurrentPatternAs::<IUIAutomationExpandCollapsePattern>(UIA_ExpandCollapsePatternId)
+    } && unsafe { exp_pat.CurrentExpandCollapseState() }
+        .is_ok_and(|s| s == ExpandCollapseState_Collapsed)
+    {
+        expanded_here = unsafe { exp_pat.Expand() }.is_ok();
+        if expanded_here {
+            std::thread::sleep(std::time::Duration::from_millis(60));
+        }
+    }
+
+    let mut out_items = Vec::new();
+    let mut out_els = Vec::new();
+
+    if let Ok(cond) = unsafe {
+        auto.CreatePropertyCondition(
+            UIA_ControlTypePropertyId,
+            &VARIANT::from(UIA_MenuItemControlTypeId.0),
+        )
+    } && let Ok(found) = unsafe { top_item.FindAll(TreeScope_Subtree, &cond) }
+        && let Ok(len) = unsafe { found.Length() }
+    {
+        for i in 0..len {
+            if out_items.len() >= 28 {
+                break;
+            }
+            let Ok(child) = (unsafe { found.GetElement(i) }) else {
+                continue;
+            };
+            let raw_name = unsafe { child.CurrentName() }
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            let (label, _) = parse_menu_label(&raw_name);
+            let trimmed = label.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let accel = unsafe { child.CurrentAcceleratorKey() }
+                .map(|s| s.to_string())
+                .ok()
+                .filter(|s| !s.trim().is_empty());
+            let enabled = unsafe { child.CurrentIsEnabled() }.is_ok_and(|b| b.as_bool());
+
+            let item_idx = out_els.len();
+            out_els.push(child);
+            out_items.push(GlobalMenuItem {
+                label: trimmed.to_string(),
+                shortcut: accel,
+                enabled,
+                checked: false,
+                is_separator: false,
+                action: Some(GlobalMenuAction::UiaInvoke {
+                    hwnd,
+                    menu_index,
+                    item_index: item_idx,
+                }),
+            });
+        }
+    }
+
+    if expanded_here
+        && let Ok(exp_pat) = unsafe {
+            top_item.GetCurrentPatternAs::<IUIAutomationExpandCollapsePattern>(
+                UIA_ExpandCollapsePatternId,
+            )
+        }
+    {
+        let _ = unsafe { exp_pat.Collapse() };
+    }
+
+    (out_items, out_els)
+}
+
+fn separator_item() -> GlobalMenuItem {
+    GlobalMenuItem {
+        label: String::new(),
+        shortcut: None,
+        enabled: false,
+        checked: false,
+        is_separator: true,
+        action: None,
+    }
+}
+
+fn read_hwnd_title(hwnd: HWND) -> String {
+    let len = unsafe { GetWindowTextLengthW(hwnd) };
+    if len <= 0 {
+        return String::new();
+    }
+    let mut buf = vec![0u16; (len + 1) as usize];
+    let n = unsafe { GetWindowTextW(hwnd, &mut buf) };
+    if n <= 0 {
+        return String::new();
+    }
+    String::from_utf16_lossy(&buf[..n as usize])
+}
+
+pub fn friendly_app_name(exe_name: &str, title: &str) -> String {
+    let stem = exe_name
+        .strip_suffix(".exe")
+        .or_else(|| exe_name.strip_suffix(".EXE"))
+        .unwrap_or(exe_name);
+    match stem.to_ascii_lowercase().as_str() {
+        "msedge" => "Edge".to_string(),
+        "chrome" => "Chrome".to_string(),
+        "firefox" => "Firefox".to_string(),
+        "code" => "VS Code".to_string(),
+        "windowsterminal" | "wt" => "Terminal".to_string(),
+        "explorer" => "Files".to_string(),
+        "notepad" => "Notepad".to_string(),
+        "mspaint" => "Paint".to_string(),
+        "systemsettings" => "Windows Settings".to_string(),
+        "" => title
+            .split(['—', '-'])
+            .next_back()
+            .unwrap_or("Application")
+            .trim()
+            .chars()
+            .take(20)
+            .collect(),
+        _ => {
+            let mut chars = stem.chars();
+            match chars.next() {
+                Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
+                None => "Application".to_string(),
+            }
+        }
+    }
+}
+
+/// Strips Win32 `&` accelerator markers (`&&` -> `&`) and splits trailing `\tShortcut`.
+pub fn parse_menu_label(raw: &str) -> (String, Option<String>) {
+    let (label_raw, shortcut_raw) = match raw.split_once('\t') {
+        Some((l, r)) => (l, Some(r.trim())),
+        None => (raw, None),
+    };
+
+    let mut clean = String::with_capacity(label_raw.len());
+    let mut chars = label_raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '&' {
+            if chars.peek() == Some(&'&') {
+                clean.push('&');
+                chars.next();
+            }
+        } else {
+            clean.push(c);
+        }
+    }
+
+    let shortcut = shortcut_raw
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string);
+    (clean.trim().to_string(), shortcut)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn menu_label_mnemonic_and_shortcut_parse_cleanly() {
+        assert_eq!(
+            parse_menu_label("E&xit\tAlt+F4"),
+            ("Exit".to_string(), Some("Alt+F4".to_string()))
+        );
+        assert_eq!(
+            parse_menu_label("Search && &Replace\tCtrl+H"),
+            ("Search & Replace".to_string(), Some("Ctrl+H".to_string()))
+        );
+        assert_eq!(parse_menu_label("&New"), ("New".to_string(), None));
+    }
+
+    #[test]
+    fn friendly_names_format_cleanly() {
+        assert_eq!(friendly_app_name("WindowsTerminal.exe", "PowerShell"), "Terminal");
+        assert_eq!(friendly_app_name("Code.exe", "main.rs - VS Code"), "VS Code");
+        assert_eq!(friendly_app_name("notepad.exe", "Untitled"), "Notepad");
+        assert_eq!(friendly_app_name("obsidian.exe", "Notes"), "Obsidian");
+    }
+}

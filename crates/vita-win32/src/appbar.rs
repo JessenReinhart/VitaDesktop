@@ -1,0 +1,303 @@
+use crate::monitors::enumerate_monitors;
+use directories::BaseDirs;
+use std::fs;
+use std::mem::size_of;
+use std::path::PathBuf;
+use vita_core::{MonitorInfo, PhysicalRect};
+use windows::Win32::Foundation::{HWND, LPARAM, RECT};
+use windows::Win32::Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
+use windows::Win32::System::Threading::GetCurrentProcessId;
+use windows::Win32::UI::WindowsAndMessaging::{
+    EnumWindows, GetClassNameW, GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+    IsZoomed, SPI_SETWORKAREA, SPIF_SENDCHANGE, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOZORDER,
+    SetWindowPos, SystemParametersInfoW,
+};
+use windows::core::BOOL;
+
+pub type AppBarGuard = WorkAreaGuard;
+
+fn backup_file_path() -> PathBuf {
+    BaseDirs::new()
+        .map(|b| b.data_local_dir().join("VitaDesktop").join("workareas.bak"))
+        .unwrap_or_else(|| PathBuf::from("vita-workareas.bak"))
+}
+
+fn save_workarea_backup(rects: &[PhysicalRect]) {
+    let path = backup_file_path();
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let body: String = rects
+        .iter()
+        .map(|r| format!("{},{},{},{}", r.x, r.y, r.width, r.height))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let _ = fs::write(path, body);
+}
+
+fn load_workarea_backup() -> Option<Vec<PhysicalRect>> {
+    let raw = fs::read_to_string(backup_file_path()).ok()?;
+    let mut rects = Vec::new();
+    for line in raw.lines() {
+        let parts: Vec<i32> = line
+            .split(',')
+            .filter_map(|s| s.trim().parse::<i32>().ok())
+            .collect();
+        if parts.len() == 4 && parts[2] > 0 && parts[3] > 0 {
+            rects.push(PhysicalRect {
+                x: parts[0],
+                y: parts[1],
+                width: parts[2],
+                height: parts[3],
+            });
+        }
+    }
+    (!rects.is_empty()).then_some(rects)
+}
+
+fn clear_workarea_backup() {
+    let _ = fs::remove_file(backup_file_path());
+}
+
+fn set_monitor_workarea(rect: PhysicalRect) {
+    let mut rc = RECT {
+        left: rect.x,
+        top: rect.y,
+        right: rect.x + rect.width,
+        bottom: rect.y + rect.height,
+    };
+    unsafe {
+        let _ = SystemParametersInfoW(
+            SPI_SETWORKAREA,
+            0,
+            Some((&raw mut rc).cast()),
+            SPIF_SENDCHANGE,
+        );
+    }
+}
+
+/// Restores saved pre-VitaDesktop per-monitor work areas if a crash backup file exists.
+pub fn restore_saved_workareas() {
+    if let Some(rects) = load_workarea_backup() {
+        for r in rects {
+            set_monitor_workarea(r);
+        }
+        clear_workarea_backup();
+    }
+}
+
+/// Manages GNOME-style per-monitor `SPI_SETWORKAREA` reservations so maximized windows
+/// clear the Vita Top Bar and reclaim native taskbar pixels across all displays.
+pub struct WorkAreaGuard {
+    active: bool,
+    original_workareas: Vec<PhysicalRect>,
+    target_workareas: Vec<PhysicalRect>,
+}
+
+impl WorkAreaGuard {
+    pub fn new(monitors: &[MonitorInfo], active: bool) -> Self {
+        let saved = load_workarea_backup().filter(|bak| {
+            bak.len() == monitors.len()
+                && monitors
+                    .iter()
+                    .zip(bak.iter())
+                    .all(|(m, b)| m.physical_bounds.intersects(*b))
+        });
+
+        let original_workareas = saved
+            .unwrap_or_else(|| monitors.iter().map(|m| m.physical_workarea).collect());
+
+        Self {
+            active,
+            original_workareas,
+            target_workareas: Vec::new(),
+        }
+    }
+
+    pub fn apply(
+        &mut self,
+        monitors: &[MonitorInfo],
+        top_bar_height_logical: u32,
+        bottom_reserve_logical: u32,
+        hide_native_taskbar: bool,
+    ) {
+        if monitors.is_empty() {
+            return;
+        }
+        if self.original_workareas.len() != monitors.len() {
+            self.original_workareas = monitors.iter().map(|m| m.physical_workarea).collect();
+        }
+
+        self.target_workareas.clear();
+        for (idx, mon) in monitors.iter().enumerate() {
+            let b = mon.physical_bounds;
+            let orig = self
+                .original_workareas
+                .get(idx)
+                .copied()
+                .unwrap_or(mon.physical_workarea);
+            let top_px = (top_bar_height_logical as f32 * mon.dpi_scale).round() as i32;
+            let bottom_px = (bottom_reserve_logical as f32 * mon.dpi_scale).round() as i32;
+
+            let target_top = b.y + top_px;
+            let target_bottom = if hide_native_taskbar {
+                b.bottom() - bottom_px
+            } else {
+                let taskbar_top = orig.bottom();
+                taskbar_top.min(b.bottom() - bottom_px)
+            };
+
+            self.target_workareas.push(PhysicalRect {
+                x: b.x,
+                y: target_top,
+                width: b.width,
+                height: (target_bottom - target_top).max(200),
+            });
+        }
+
+        if self.active {
+            save_workarea_backup(&self.original_workareas);
+            for &rect in &self.target_workareas {
+                set_monitor_workarea(rect);
+            }
+            nudge_maximized_windows(&self.target_workareas);
+        }
+    }
+
+    /// Re-applies target work areas only if any monitor's work area drifted (e.g. after Explorer nudge).
+    pub fn ensure_applied(&self) {
+        if !self.active || self.target_workareas.is_empty() {
+            return;
+        }
+        let current = enumerate_monitors();
+        if current.len() != self.target_workareas.len() {
+            return;
+        }
+        let mut reapplied = false;
+        for (mon, &target) in current.iter().zip(self.target_workareas.iter()) {
+            if mon.physical_workarea != target {
+                set_monitor_workarea(target);
+                reapplied = true;
+            }
+        }
+        if reapplied {
+            nudge_maximized_windows(&self.target_workareas);
+        }
+    }
+
+    pub fn restore_now(&mut self) {
+        if !self.active {
+            return;
+        }
+        for &orig in &self.original_workareas {
+            set_monitor_workarea(orig);
+        }
+        if !self.original_workareas.is_empty() {
+            nudge_maximized_windows(&self.original_workareas);
+        }
+        clear_workarea_backup();
+    }
+}
+
+impl Drop for WorkAreaGuard {
+    fn drop(&mut self) {
+        self.restore_now();
+    }
+}
+
+struct NudgeCtx<'a> {
+    own_pid: u32,
+    workareas: &'a [PhysicalRect],
+}
+
+unsafe extern "system" fn nudge_maximized_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let ctx = unsafe { &*(lparam.0 as *const NudgeCtx<'_>) };
+    if !unsafe { IsWindowVisible(hwnd) }.as_bool()
+        || unsafe { IsIconic(hwnd) }.as_bool()
+        || !unsafe { IsZoomed(hwnd) }.as_bool()
+    {
+        return BOOL(1);
+    }
+
+    let mut pid = 0u32;
+    unsafe {
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    }
+    if pid == 0 || pid == ctx.own_pid {
+        return BOOL(1);
+    }
+
+    let mut cls = [0u16; 64];
+    let clen = unsafe { GetClassNameW(hwnd, &mut cls) };
+    let cname = String::from_utf16_lossy(&cls[..clen.max(0) as usize]);
+    if matches!(
+        cname.as_str(),
+        "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+    ) {
+        return BOOL(1);
+    }
+
+    let mut win_rc = RECT::default();
+    if unsafe { GetWindowRect(hwnd, &mut win_rc) }.is_err() {
+        return BOOL(1);
+    }
+    let mut ext_rc = RECT::default();
+    let has_ext = unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            (&raw mut ext_rc).cast(),
+            size_of::<RECT>() as u32,
+        )
+    }
+    .is_ok();
+    let visible = if has_ext { ext_rc } else { win_rc };
+
+    let cx = (visible.left + visible.right) / 2;
+    let cy = (visible.top + visible.bottom) / 2;
+    let Some(target) = ctx
+        .workareas
+        .iter()
+        .find(|w| cx >= w.x && cx < w.right() && cy >= w.y - 120 && cy < w.bottom() + 120)
+    else {
+        return BOOL(1);
+    };
+
+    if (visible.top - target.y).abs() <= 2 && (visible.bottom - target.bottom()).abs() <= 2 {
+        return BOOL(1);
+    }
+
+    // Preserve invisible DWM resize-border insets on maximized Win32 windows so edges stay flush.
+    let pad_l = (visible.left - win_rc.left).max(0);
+    let pad_t = (visible.top - win_rc.top).max(0);
+    let pad_r = (win_rc.right - visible.right).max(0);
+    let pad_b = (win_rc.bottom - visible.bottom).max(0);
+
+    unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            target.x - pad_l,
+            target.y - pad_t,
+            target.width + pad_l + pad_r,
+            target.height + pad_t + pad_b,
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
+        );
+    }
+
+    BOOL(1)
+}
+
+fn nudge_maximized_windows(workareas: &[PhysicalRect]) {
+    if workareas.is_empty() {
+        return;
+    }
+    let ctx = NudgeCtx {
+        own_pid: unsafe { GetCurrentProcessId() },
+        workareas,
+    };
+    let ptr = &ctx as *const NudgeCtx<'_> as isize;
+    unsafe {
+        let _ = EnumWindows(Some(nudge_maximized_proc), LPARAM(ptr));
+    }
+}

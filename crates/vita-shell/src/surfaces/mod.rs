@@ -1,0 +1,11 @@
+pub mod calm_zone;
+pub mod dock;
+pub mod dock_menu;
+pub mod global_menu;
+pub mod launcher;
+pub mod notifications;
+pub mod quick_controls;
+pub mod settings;
+pub mod spaces;
+pub mod top_bar;
+pub mod window_decorator;
