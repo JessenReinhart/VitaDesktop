@@ -1,4 +1,4 @@
-use crate::monitors::enumerate_monitors;
+﻿use crate::monitors::enumerate_monitors;
 use directories::BaseDirs;
 use std::fs;
 use std::mem::size_of;
@@ -86,12 +86,30 @@ pub fn restore_saved_workareas() {
     }
 }
 
+
+/// Returns the work-area top edge (physical px, relative to the monitor top) for a Top Bar of
+/// `top_px`, optionally tucked upward by `tuck_px` so a maximized window's own title bar hides
+/// behind the Top Bar. Keeps at least 2px so the window never slides above the screen edge.
+pub fn tucked_top_px(top_px: i32, tuck_px: i32, tucked: bool) -> i32 {
+    if tucked {
+        top_px - tuck_px.clamp(0, (top_px - 2).max(0))
+    } else {
+        top_px
+    }
+}
+
 /// Manages GNOME-style per-monitor `SPI_SETWORKAREA` reservations so maximized windows
 /// clear the Vita Top Bar and reclaim native taskbar pixels across all displays.
+///
+/// When a monitor is flagged as "tucked", the reserved top edge shrinks by the app title bar
+/// height. The system then places maximized windows so their title bar sits underneath the
+/// (opaque) Top Bar, without fighting the application over window bounds.
 pub struct WorkAreaGuard {
     active: bool,
     original_workareas: Vec<PhysicalRect>,
     target_workareas: Vec<PhysicalRect>,
+    tuck_flags: Vec<bool>,
+    tuck_height_logical: u32,
 }
 
 impl WorkAreaGuard {
@@ -111,7 +129,15 @@ impl WorkAreaGuard {
             active,
             original_workareas,
             target_workareas: Vec::new(),
+            tuck_flags: Vec::new(),
+            tuck_height_logical: 34,
         }
+    }
+
+    /// Sets which monitors should hide the maximized app title bar behind the Top Bar.
+    pub fn set_tucked_monitors(&mut self, flags: Vec<bool>, tuck_height_logical: u32) {
+        self.tuck_flags = flags;
+        self.tuck_height_logical = tuck_height_logical;
     }
 
     pub fn apply(
@@ -137,9 +163,11 @@ impl WorkAreaGuard {
                 .copied()
                 .unwrap_or(mon.physical_workarea);
             let top_px = (top_bar_height_logical as f32 * mon.dpi_scale).round() as i32;
+            let tuck_px = (self.tuck_height_logical as f32 * mon.dpi_scale).round() as i32;
+            let tucked = self.tuck_flags.get(idx).copied().unwrap_or(false);
             let bottom_px = (bottom_reserve_logical as f32 * mon.dpi_scale).round() as i32;
 
-            let target_top = b.y + top_px;
+            let target_top = b.y + tucked_top_px(top_px, tuck_px, tucked);
             let target_bottom = if hide_native_taskbar {
                 b.bottom() - bottom_px
             } else {
@@ -299,5 +327,22 @@ fn nudge_maximized_windows(workareas: &[PhysicalRect]) {
     let ptr = &ctx as *const NudgeCtx<'_> as isize;
     unsafe {
         let _ = EnumWindows(Some(nudge_maximized_proc), LPARAM(ptr));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tucked_top_moves_up_but_never_above_screen() {
+        // 46px Top Bar, 34px title bar -> app starts at y = 12.
+        assert_eq!(tucked_top_px(46, 34, true), 12);
+        // Not tucked -> unchanged.
+        assert_eq!(tucked_top_px(46, 34, false), 46);
+        // A huge title bar is clamped so the window keeps a 2px margin from the top.
+        assert_eq!(tucked_top_px(46, 200, true), 2);
+        // 150% DPI.
+        assert_eq!(tucked_top_px(69, 51, true), 18);
     }
 }

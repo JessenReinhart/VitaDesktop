@@ -26,6 +26,7 @@ pub struct TopBarState<'a> {
     pub active_menu: Option<&'a ActiveAppMenu>,
     pub open_global_menu: Option<(usize, usize)>,
     pub maximized_window: Option<&'a DecoratedWindowState>,
+    pub has_maximized_window: bool,
 }
 
 fn truncate(s: &str, max_chars: usize) -> String {
@@ -198,13 +199,25 @@ fn view_pantheon_full_width<'a>(state: &TopBarState<'a>) -> Element<'a, Message>
         .width(Length::Fill)
         .height(Length::Fill);
 
+    let solid_max = config.decorator.enabled
+        && config.decorator.hide_maximized_titlebar
+        && state.has_maximized_window;
+
     container(bar_row)
         .width(Length::Fill)
         .height(Length::Fill)
         .padding([0, 12])
         .style({
             let tokens = *tokens;
-            move |_| full_width_topbar_style(&tokens)
+            move |_| {
+                let mut s = full_width_topbar_style(&tokens);
+                if solid_max {
+                    s.background = Some(Background::Color(color(
+                        tokens.surface_topbar.with_alpha(1.0),
+                    )));
+                }
+                s
+            }
         })
         .into()
 }
@@ -377,6 +390,10 @@ fn view_horizon_floating_pills<'a>(state: &TopBarState<'a>) -> Element<'a, Messa
 
     right_row = right_row.push(power_pill);
 
+    let has_max_win = config.decorator.enabled
+        && config.decorator.hide_maximized_titlebar
+        && state.has_maximized_window;
+
     let content = row![
         row![brand_pill, secondary_left_pill]
             .spacing(8)
@@ -390,13 +407,39 @@ fn view_horizon_floating_pills<'a>(state: &TopBarState<'a>) -> Element<'a, Messa
     container(content)
         .width(Length::Fill)
         .height(Length::Fill)
-        .padding(Padding {
-            top: 8.0,
-            right: 14.0,
-            bottom: 0.0,
-            left: 14.0,
+        .padding(if has_max_win {
+            Padding {
+                top: 0.0,
+                right: 14.0,
+                bottom: 0.0,
+                left: 14.0,
+            }
+        } else {
+            Padding {
+                top: 8.0,
+                right: 14.0,
+                bottom: 0.0,
+                left: 14.0,
+            }
         })
-        .style(|_| transparent_container())
+        .align_y(if has_max_win {
+            iced::alignment::Vertical::Center
+        } else {
+            iced::alignment::Vertical::Top
+        })
+        .style({
+            let tokens = *tokens;
+            move |_| {
+                if has_max_win {
+                    let mut s = full_width_topbar_style(&tokens);
+                    s.background =
+                        Some(Background::Color(color(tokens.surface_base.with_alpha(1.0))));
+                    s
+                } else {
+                    transparent_container()
+                }
+            }
+        })
         .into()
 }
 

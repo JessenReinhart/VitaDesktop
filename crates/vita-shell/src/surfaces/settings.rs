@@ -765,6 +765,42 @@ fn view_appearance<'a>(state: &SettingsState<'a>) -> Element<'a, Message> {
                 deco.maximized_topbar_controls,
                 Message::SettingsToggleDecoratorMaxTopBar,
             ),
+            divider(tokens),
+            toggle_row(
+                tokens,
+                "Hide maximized window title bar",
+                "Tuck maximized app title bars behind the Top Bar like macOS.",
+                deco.hide_maximized_titlebar,
+                Message::SettingsToggleHideMaximizedTitlebar,
+            ),
+            divider(tokens),
+            column![
+                row![
+                    column![
+                        text("Title bar height to hide")
+                            .font(FONT_MEDIUM)
+                            .size(13)
+                            .color(primary_fg),
+                        text("Match your apps' title bar so the Top Bar covers it exactly.")
+                            .font(FONT_REGULAR)
+                            .size(11.5)
+                            .color(secondary_fg),
+                    ]
+                    .spacing(2),
+                    space::horizontal(),
+                    text(format!("{} px", deco.maximized_titlebar_height))
+                        .font(FONT_MONO)
+                        .size(12)
+                        .color(secondary_fg),
+                ]
+                .align_y(Alignment::Center),
+                slider(24.0..=44.0, deco.maximized_titlebar_height as f32, |v| {
+                    Message::SettingsMaximizedTitlebarHeightChanged(v.round() as u32)
+                })
+                .step(1.0_f32)
+                .style(warm_accent_slider_style(tokens)),
+            ]
+            .spacing(6),
         ]
         .spacing(12)
         .into(),

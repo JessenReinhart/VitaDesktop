@@ -124,6 +124,8 @@ pub enum Message {
     SettingsToggleDecoratorDwmSync,
     SettingsToggleDecoratorOverlay,
     SettingsToggleDecoratorMaxTopBar,
+    SettingsToggleHideMaximizedTitlebar,
+    SettingsMaximizedTitlebarHeightChanged(u32),
     SettingsSelectDecoratorButtonStyle(DecoratorButtonStyle),
     SettingsToggleCalmZone,
     SettingsCalmUserNameChanged(String),

@@ -52,6 +52,7 @@ const EVENT_OBJECT_NAMECHANGE: u32 = 0x800C;
 const EVENT_OBJECT_CLOAKED: u32 = 0x8017;
 const EVENT_OBJECT_UNCLOAKED: u32 = 0x8018;
 const EVENT_SYSTEM_FOREGROUND: u32 = 0x0003;
+const EVENT_SYSTEM_MOVESIZEEND: u32 = 0x000B;
 const EVENT_SYSTEM_MINIMIZESTART: u32 = 0x0016;
 const EVENT_SYSTEM_MINIMIZEEND: u32 = 0x0017;
 const WINEVENT_OUTOFCONTEXT: u32 = 0x0000;
@@ -85,7 +86,10 @@ unsafe extern "system" fn win_event_proc(
 ) {
     let is_system_event = matches!(
         event,
-        EVENT_SYSTEM_FOREGROUND | EVENT_SYSTEM_MINIMIZESTART | EVENT_SYSTEM_MINIMIZEEND
+        EVENT_SYSTEM_FOREGROUND
+            | EVENT_SYSTEM_MOVESIZEEND
+            | EVENT_SYSTEM_MINIMIZESTART
+            | EVENT_SYSTEM_MINIMIZEEND
     );
     let is_tracked_object_event = matches!(
         event,

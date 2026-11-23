@@ -177,6 +177,7 @@ pub enum GlobalMenuAction {
         menu_index: usize,
         item_index: usize,
     },
+    SyntheticMenuClick { hwnd: isize, index: usize },
     WindowAction(WindowMenuAction),
 }
 

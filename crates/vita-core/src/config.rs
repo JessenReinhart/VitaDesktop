@@ -236,6 +236,8 @@ pub struct WindowDecoratorConfig {
     pub dwm_theme_sync: bool,
     pub custom_overlay: bool,
     pub maximized_topbar_controls: bool,
+    pub hide_maximized_titlebar: bool,
+    pub maximized_titlebar_height: u32,
     pub button_style: DecoratorButtonStyle,
 }
 
@@ -246,6 +248,8 @@ impl Default for WindowDecoratorConfig {
             dwm_theme_sync: true,
             custom_overlay: true,
             maximized_topbar_controls: true,
+            hide_maximized_titlebar: true,
+            maximized_titlebar_height: 34,
             button_style: DecoratorButtonStyle::Horizon,
         }
     }

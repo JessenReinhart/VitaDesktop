@@ -84,6 +84,9 @@ fn parse_cli() -> CliCommand {
             "--open-decorator-preview" => {
                 open_decorator_preview = true;
             }
+            "--debug-tuck" => {
+                app::set_debug_force_tuck(true);
+            }
             "--settings-tab" => {
                 if let Some(t) = args.get(i + 1) {
                     settings_tab = match t.to_ascii_lowercase().as_str() {

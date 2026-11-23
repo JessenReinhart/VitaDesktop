@@ -40,6 +40,58 @@ use vita_win32::{
 static GLOBAL_MENU_RX: Mutex<Option<mpsc::UnboundedReceiver<Option<ActiveAppMenu>>>> =
     Mutex::new(None);
 static WORK_AREA_SHARED: Mutex<Option<Arc<Mutex<WorkAreaGuard>>>> = Mutex::new(None);
+static DEBUG_FORCE_TUCK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Forces the maximized-title-bar tuck on every monitor (used by `--debug-tuck` for diagnostics).
+pub fn set_debug_force_tuck(on: bool) {
+    DEBUG_FORCE_TUCK.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn is_top_tab_browser(exe_name: &str) -> bool {
+    matches!(
+        exe_name.to_ascii_lowercase().as_str(),
+        "msedge.exe" | "chrome.exe" | "firefox.exe" | "brave.exe" | "vivaldi.exe" | "opera.exe" | "arc.exe"
+    )
+}
+
+/// Resolves per-monitor title-bar tuck flags from the authoritative foreground window and
+/// top-to-bottom Z-ordered `running_windows` (`EnumWindows` order).
+fn resolve_tuck_flags(
+    monitor_count: usize,
+    decorated: Option<&DecoratedWindowState>,
+    running_windows: &[RunningWindow],
+) -> Vec<bool> {
+    (0..monitor_count)
+        .map(|mon_idx| {
+            if let Some(d) = decorated
+                && d.monitor_idx == mon_idx
+            {
+                if d.is_fullscreen {
+                    return false;
+                }
+                if d.is_maximized {
+                    return !is_top_tab_browser(&d.exe_name);
+                }
+            }
+
+            let stale_non_max_hwnd = decorated
+                .filter(|d| !d.is_maximized || d.monitor_idx != mon_idx)
+                .map(|d| d.hwnd);
+
+            for w in running_windows.iter() {
+                if w.monitor_idx != mon_idx || w.is_minimized || !w.is_maximized {
+                    continue;
+                }
+                if stale_non_max_hwnd == Some(w.hwnd) {
+                    continue;
+                }
+                return !is_top_tab_browser(&w.exe_name);
+            }
+
+            false
+        })
+        .collect()
+}
 
 #[derive(Debug, Clone, Copy)]
 enum HardwareCmd {
@@ -151,6 +203,8 @@ pub struct VitaShell {
     decorator_icon: Option<(isize, image::Handle)>,
     dwm_themer: DwmWindowThemer,
     last_decorator_press: Option<(isize, Instant)>,
+    tucked_monitors: Vec<bool>,
+    tuck_height_applied: u32,
 
     screenshot_dir: Option<PathBuf>,
     open_launcher_on_boot: bool,
@@ -462,6 +516,8 @@ impl VitaShell {
             decorator_icon: None,
             dwm_themer: DwmWindowThemer::default(),
             last_decorator_press: None,
+            tucked_monitors: Vec::new(),
+            tuck_height_applied: 0,
             screenshot_dir,
             open_launcher_on_boot,
             open_quick_controls_on_boot,
@@ -691,6 +747,7 @@ impl VitaShell {
                 self.running_windows = wins.clone();
                 self.rebuild_dock_items();
                 self.update_dock_visibility();
+                self.sync_workarea_tuck();
                 Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || enumerate_spaces(&wins))
@@ -826,8 +883,16 @@ impl VitaShell {
                 }
 
                 self.decorated_window = maybe_state;
+                if let Some(st) = &self.decorated_window
+                    && let Some(rw) = self.running_windows.iter_mut().find(|w| w.hwnd == st.hwnd)
+                {
+                    rw.is_maximized = st.is_maximized;
+                    rw.frame_rect = st.frame_rect;
+                    rw.monitor_idx = st.monitor_idx;
+                }
                 self.apply_dwm_theming();
                 self.update_dock_visibility();
+                self.sync_workarea_tuck();
                 self.sync_decorator_window()
             }
             Message::DecoratorHeaderPressed(hwnd) => {
@@ -1457,6 +1522,16 @@ impl VitaShell {
                 next.decorator.maximized_topbar_controls = !next.decorator.maximized_topbar_controls;
                 self.apply_new_config(next, true)
             }
+            Message::SettingsToggleHideMaximizedTitlebar => {
+                let mut next = self.config.clone();
+                next.decorator.hide_maximized_titlebar = !next.decorator.hide_maximized_titlebar;
+                self.apply_new_config(next, true)
+            }
+            Message::SettingsMaximizedTitlebarHeightChanged(px) => {
+                let mut next = self.config.clone();
+                next.decorator.maximized_titlebar_height = px.clamp(24, 44);
+                self.apply_new_config(next, true)
+            }
             Message::SettingsSelectDecoratorButtonStyle(style) => {
                 let mut next = self.config.clone();
                 next.decorator.button_style = style;
@@ -1651,6 +1726,11 @@ impl VitaShell {
                     .decorated_window
                     .as_ref()
                     .filter(|d| d.is_maximized && d.monitor_idx == mon_idx);
+                let has_maximized_window = self
+                    .tucked_monitors
+                    .get(mon_idx)
+                    .copied()
+                    .unwrap_or(false);
 
                 top_bar::view(top_bar::TopBarState {
                     config: &self.config,
@@ -1667,6 +1747,7 @@ impl VitaShell {
                     active_menu,
                     open_global_menu: self.open_global_menu,
                     maximized_window: max_win,
+                    has_maximized_window,
                 })
             }
             Some(SurfaceKind::Dock) => {
@@ -2490,6 +2571,7 @@ impl VitaShell {
                 );
             }
         }
+        self.sync_workarea_tuck();
 
         let dock_task = self.reconcile_dock_windows();
 
@@ -2665,6 +2747,9 @@ impl VitaShell {
             });
         }
 
+        self.tucked_monitors.clear();
+        self.sync_workarea_tuck();
+
         let calm_task = self.sync_calm_zone();
         close_tasks.extend(open_tasks);
         close_tasks.push(calm_task);
@@ -2752,6 +2837,44 @@ impl VitaShell {
                 self.monitor_shells[mon_idx].dock_hidden = want_hide;
                 set_window_visible(dock_hwnd, !want_hide);
             }
+        }
+    }
+
+    /// Monitors where the active/frontmost maximized window should have its own title bar hidden
+    /// behind the (opaque) Top Bar.
+    fn compute_tuck_flags(&self) -> Vec<bool> {
+        let count = self.monitor_shells.len();
+        if self.screenshot_dir.is_some()
+            || !self.config.decorator.enabled
+            || !self.config.decorator.hide_maximized_titlebar
+        {
+            return vec![false; count];
+        }
+        if DEBUG_FORCE_TUCK.load(std::sync::atomic::Ordering::Relaxed) {
+            return vec![true; count];
+        }
+        resolve_tuck_flags(count, self.decorated_window.as_ref(), &self.running_windows)
+    }
+
+    /// Recomputes which monitors tuck their maximized title bar and re-applies work areas on change.
+    fn sync_workarea_tuck(&mut self) {
+        let flags = self.compute_tuck_flags();
+        let height = self.config.decorator.maximized_titlebar_height.clamp(24, 44);
+        if flags == self.tucked_monitors && height == self.tuck_height_applied {
+            return;
+        }
+        self.tucked_monitors = flags.clone();
+        self.tuck_height_applied = height;
+        let monitors = self.monitor_infos();
+        let bottom_reserve = bottom_reserve_for_config(&self.config);
+        if let Ok(mut wg) = self.work_area_guard.lock() {
+            wg.set_tucked_monitors(flags, height);
+            wg.apply(
+                &monitors,
+                self.config.top_bar.height,
+                bottom_reserve,
+                self.config.hide_native_taskbar,
+            );
         }
     }
 
@@ -3624,4 +3747,134 @@ fn shell_backend_worker() -> impl Stream<Item = Message> {
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fake_decorated(
+        hwnd: isize,
+        exe_name: &str,
+        monitor_idx: usize,
+        is_maximized: bool,
+        is_fullscreen: bool,
+    ) -> DecoratedWindowState {
+        DecoratedWindowState {
+            hwnd,
+            title: exe_name.to_string(),
+            exe_name: exe_name.to_string(),
+            frame_rect: PhysicalRect::default(),
+            dpi_scale: 1.0,
+            is_maximized,
+            is_fullscreen,
+            mode: DecoratorMode::ControlsOnly,
+            monitor_idx,
+            titlebar_bg: None,
+            icon: None,
+        }
+    }
+
+    fn fake_running(
+        hwnd: isize,
+        exe_name: &str,
+        monitor_idx: usize,
+        is_maximized: bool,
+        is_minimized: bool,
+        is_focused: bool,
+    ) -> RunningWindow {
+        RunningWindow {
+            hwnd,
+            title: exe_name.to_string(),
+            exe_name: exe_name.to_string(),
+            exe_path: String::new(),
+            pid: 1,
+            is_focused,
+            is_minimized,
+            is_maximized,
+            frame_rect: PhysicalRect::default(),
+            monitor_idx,
+            icon: None,
+        }
+    }
+
+    #[test]
+    fn resolve_tuck_flags_handles_frontmost_zorder_and_stale_windows() {
+        // 1. Maximized Antigravity in front of maximized Edge on monitor 0 -> [true]
+        let antigravity = fake_decorated(101, "Antigravity.exe", 0, true, false);
+        let running_antigravity_front = vec![
+            fake_running(101, "Antigravity.exe", 0, true, false, true),
+            fake_running(202, "msedge.exe", 0, true, false, false),
+        ];
+        assert_eq!(
+            resolve_tuck_flags(1, Some(&antigravity), &running_antigravity_front),
+            vec![true]
+        );
+
+        // 2. Maximized Edge in front of maximized Antigravity on monitor 0 -> [false]
+        let edge = fake_decorated(202, "msedge.exe", 0, true, false);
+        let running_edge_front = vec![
+            fake_running(202, "msedge.exe", 0, true, false, true),
+            fake_running(101, "Antigravity.exe", 0, true, false, false),
+        ];
+        assert_eq!(
+            resolve_tuck_flags(1, Some(&edge), &running_edge_front),
+            vec![false]
+        );
+
+        // 3. Focused Antigravity just maximized while running_windows is still stale -> [true]
+        let running_stale_unmax = vec![
+            fake_running(101, "Antigravity.exe", 0, false, false, true),
+            fake_running(202, "msedge.exe", 0, true, false, false),
+        ];
+        assert_eq!(
+            resolve_tuck_flags(1, Some(&antigravity), &running_stale_unmax),
+            vec![true]
+        );
+
+        // 4. Focused Antigravity just restored while running_windows still says maximized -> [false]
+        let antigravity_restored = fake_decorated(101, "Antigravity.exe", 0, false, false);
+        let running_stale_max_only_antigravity =
+            vec![fake_running(101, "Antigravity.exe", 0, true, false, true)];
+        assert_eq!(
+            resolve_tuck_flags(
+                1,
+                Some(&antigravity_restored),
+                &running_stale_max_only_antigravity
+            ),
+            vec![false]
+        );
+
+        // 5. VitaDesktop popup focused (decorated = None) keeps frontmost Z-order choice -> [true]
+        assert_eq!(
+            resolve_tuck_flags(1, None, &running_antigravity_front),
+            vec![true]
+        );
+
+        // 6. Multi-monitor: maximized Antigravity on monitor 0, maximized Edge on monitor 1 -> [true, false]
+        let multi_running = vec![
+            fake_running(101, "Antigravity.exe", 0, true, false, true),
+            fake_running(202, "msedge.exe", 1, true, false, false),
+        ];
+        assert_eq!(
+            resolve_tuck_flags(2, Some(&antigravity), &multi_running),
+            vec![true, false]
+        );
+
+        // 7. Fullscreen Antigravity -> [false]
+        let antigravity_fs = fake_decorated(101, "Antigravity.exe", 0, false, true);
+        let running_fs = vec![fake_running(101, "Antigravity.exe", 0, true, false, true)];
+        assert_eq!(
+            resolve_tuck_flags(1, Some(&antigravity_fs), &running_fs),
+            vec![false]
+        );
+
+        // 8. Maximized Antigravity moved from monitor 0 to monitor 1 with stale running_windows -> [false, true]
+        let antigravity_mon1 = fake_decorated(101, "Antigravity.exe", 1, true, false);
+        let running_stale_mon0 = vec![fake_running(101, "Antigravity.exe", 0, true, false, true)];
+        assert_eq!(
+            resolve_tuck_flags(2, Some(&antigravity_mon1), &running_stale_mon0),
+            vec![false, true]
+        );
+    }
 }
