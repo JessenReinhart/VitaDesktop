@@ -18,9 +18,9 @@ pub mod workspaces;
 pub use appbar::{AppBarGuard, WorkAreaGuard, restore_saved_workareas};
 pub use apps::{enumerate_installed_apps, launch_app_aumid, resolve_aumid_icon};
 pub use decorator::{
-    DecoratorTracker, DwmWindowThemer, begin_drag_window, inspect_foreground_window,
-    is_window_always_on_top, minimize_window, rgb_to_colorref, toggle_always_on_top,
-    toggle_maximize_window,
+    DecoratorTracker, DwmWindowThemer, begin_drag_window, dominant_bgra_color,
+    inspect_foreground_window, is_window_always_on_top, minimize_window, rgb_to_colorref,
+    sample_maximized_window_bg, toggle_always_on_top, toggle_maximize_window,
 };
 pub use global_menu::GlobalMenuWorker;
 pub use hotkeys::{HotkeyEvent, HotkeyGuard};

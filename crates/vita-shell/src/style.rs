@@ -67,7 +67,11 @@ pub fn floating_pill_surface(tokens: &ThemeTokens, radius: f32) -> container::St
     }
 }
 
-pub fn dock_pill_surface(tokens: &ThemeTokens, dock: &vita_core::DockConfig) -> container::Style {
+pub fn dock_pill_surface(
+    tokens: &ThemeTokens,
+    dock: &vita_core::DockConfig,
+    reveal: f32,
+) -> container::Style {
     use vita_core::DockBackgroundStyle;
 
     let base = match dock.background_style {
@@ -91,11 +95,13 @@ pub fn dock_pill_surface(tokens: &ThemeTokens, dock: &vita_core::DockConfig) -> 
         DockBackgroundStyle::Transparent => tokens.surface_dock.with_alpha(0.0),
     };
 
-    let alpha = if dock.background_style == DockBackgroundStyle::Transparent {
+    let base_alpha = if dock.background_style == DockBackgroundStyle::Transparent {
         0.0
     } else {
         (dock.background_opacity.clamp(0, 100) as f32) / 100.0
     };
+    let reveal = reveal.clamp(0.0, 1.0);
+    let alpha = base_alpha * reveal;
     let bg = base.with_alpha(alpha);
     let max_radius = (dock.effective_pill_height() * 0.5).floor();
     let radius = (dock.corner_radius.clamp(6, 36) as f32).min(max_radius);
@@ -104,12 +110,14 @@ pub fn dock_pill_surface(tokens: &ThemeTokens, dock: &vita_core::DockConfig) -> 
     } else {
         0.0
     };
-    let border_color = tokens.border_control.with_alpha(alpha.clamp(0.25, 1.0));
+    let border_color = tokens
+        .border_control
+        .with_alpha(alpha.clamp(0.25, 1.0) * reveal);
     let shadow_alpha = tokens.shadow_color.a * alpha;
 
     container::Style {
         background: (alpha > 0.005).then_some(Background::Color(color(bg))),
-        text_color: Some(color(tokens.text_primary)),
+        text_color: Some(color(tokens.text_primary.scale_alpha(reveal))),
         border: Border {
             color: color(border_color),
             width: border_width,
@@ -146,17 +154,20 @@ pub fn popover_card_surface(tokens: &ThemeTokens, radius: f32) -> container::Sty
     }
 }
 
-pub fn tooltip_style(tokens: &ThemeTokens) -> container::Style {
+pub fn tooltip_style(tokens: &ThemeTokens, opacity: f32) -> container::Style {
+    let op = opacity.clamp(0.0, 1.0);
     container::Style {
-        background: Some(Background::Color(color(tokens.surface_tooltip))),
-        text_color: Some(Color::from_rgb(0.969, 0.969, 0.980)),
+        background: Some(Background::Color(color(
+            tokens.surface_tooltip.scale_alpha(op),
+        ))),
+        text_color: Some(Color::from_rgba(0.969, 0.969, 0.980, op)),
         border: Border {
-            color: color(tokens.border_subtle),
+            color: color(tokens.border_subtle.scale_alpha(op)),
             width: 1.0,
             radius: Radius::from(tokens.r8),
         },
         shadow: Shadow {
-            color: color(tokens.shadow_color),
+            color: color(tokens.shadow_color.scale_alpha(op)),
             offset: Vector::new(0.0, 3.0),
             blur_radius: 10.0,
         },

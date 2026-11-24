@@ -1,3 +1,5 @@
+use crate::theme::RgbaColor;
+
 /// Frame-rate independent semi-implicit Euler spring solver.
 #[derive(Debug, Clone, Copy)]
 pub struct Spring {
@@ -21,6 +23,14 @@ impl Spring {
 
     pub const fn calm(initial: f32) -> Self {
         Self::new(initial, 340.0, 28.0)
+    }
+
+    pub const fn smooth(initial: f32) -> Self {
+        Self::new(initial, 220.0, 28.0)
+    }
+
+    pub const fn snappy(initial: f32) -> Self {
+        Self::new(initial, 340.0, 34.0)
     }
 
     pub fn set_target(&mut self, target: f32) {
@@ -164,6 +174,97 @@ impl DockMagnifier {
     }
 }
 
+/// Critically-damped color and opacity transition for Top Bar backdrop fills.
+#[derive(Debug, Clone, Copy)]
+pub struct BackdropTransition {
+    opacity: Spring,
+    color_r: Spring,
+    color_g: Spring,
+    color_b: Spring,
+    has_color: bool,
+}
+
+impl BackdropTransition {
+    pub fn new(fallback: RgbaColor) -> Self {
+        Self {
+            opacity: Spring::smooth(0.0),
+            color_r: Spring::new(fallback.r, 180.0, 26.0),
+            color_g: Spring::new(fallback.g, 180.0, 26.0),
+            color_b: Spring::new(fallback.b, 180.0, 26.0),
+            has_color: false,
+        }
+    }
+
+    pub fn set_active_color(&mut self, color: RgbaColor, instant: bool) {
+        if instant {
+            self.opacity.snap(1.0);
+            self.color_r.snap(color.r);
+            self.color_g.snap(color.g);
+            self.color_b.snap(color.b);
+            self.has_color = true;
+            return;
+        }
+        if !self.has_color || self.opacity.value <= 0.03 {
+            // Snap RGB before fading in from transparent so stale/theme-base colors never flash.
+            self.color_r.snap(color.r);
+            self.color_g.snap(color.g);
+            self.color_b.snap(color.b);
+        } else {
+            self.color_r.set_target(color.r);
+            self.color_g.set_target(color.g);
+            self.color_b.set_target(color.b);
+        }
+        self.has_color = true;
+        self.opacity.set_target(1.0);
+    }
+
+    pub fn set_inactive(&mut self, instant: bool) {
+        if instant {
+            self.opacity.snap(0.0);
+        } else {
+            self.opacity.set_target(0.0);
+        }
+    }
+
+    pub fn step(&mut self, dt: f32, reduce_motion: bool) -> bool {
+        let mut active = false;
+        active |= self.opacity.step(dt, reduce_motion);
+        active |= self.color_r.step(dt, reduce_motion);
+        active |= self.color_g.step(dt, reduce_motion);
+        active |= self.color_b.step(dt, reduce_motion);
+        self.opacity.value = self.opacity.value.clamp(0.0, 1.0);
+        self.color_r.value = self.color_r.value.clamp(0.0, 1.0);
+        self.color_g.value = self.color_g.value.clamp(0.0, 1.0);
+        self.color_b.value = self.color_b.value.clamp(0.0, 1.0);
+        active
+    }
+
+    pub fn is_active(&self) -> bool {
+        !self.opacity.is_settled()
+            || !self.color_r.is_settled()
+            || !self.color_g.is_settled()
+            || !self.color_b.is_settled()
+    }
+
+    pub fn opacity(&self) -> f32 {
+        self.opacity.value.clamp(0.0, 1.0)
+    }
+
+    pub fn current_color(&self) -> Option<RgbaColor> {
+        let a = self.opacity();
+        if a <= 0.004 {
+            None
+        } else {
+            Some(RgbaColor::rgba(
+                self.color_r.value.clamp(0.0, 1.0),
+                self.color_g.value.clamp(0.0, 1.0),
+                self.color_b.value.clamp(0.0, 1.0),
+                a,
+            ))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,5 +316,53 @@ mod tests {
         }
         assert!(!mag.is_active());
         assert!((mag.scale_at(1) - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn backdrop_transition_snaps_rgb_from_transparent_crossfades_when_visible_and_fades_out() {
+        let fallback = RgbaColor::rgba(1.0, 1.0, 1.0, 1.0);
+        let mut bd = BackdropTransition::new(fallback);
+        assert_eq!(bd.current_color(), None);
+        assert!(!bd.is_active());
+
+        // Appearing from transparent snaps RGB so no white flash appears during fade-in.
+        let dark_app = RgbaColor::rgba(0.12, 0.14, 0.19, 1.0);
+        bd.set_active_color(dark_app, false);
+        assert!(bd.is_active());
+        bd.step(1.0 / 60.0, false);
+        let c = bd.current_color().expect("visible during fade-in");
+        assert!((c.r - dark_app.r).abs() < 1e-5);
+        assert!((c.g - dark_app.g).abs() < 1e-5);
+        assert!((c.b - dark_app.b).abs() < 1e-5);
+        assert!(c.a > 0.0 && c.a < 1.0);
+
+        for _ in 0..180 {
+            bd.step(1.0 / 60.0, false);
+        }
+        assert!(!bd.is_active());
+        assert!((bd.opacity() - 1.0).abs() < 0.01);
+
+        // Switching while visible smoothly interpolates RGB.
+        let light_app = RgbaColor::rgba(0.95, 0.96, 0.98, 1.0);
+        bd.set_active_color(light_app, false);
+        assert!(bd.is_active());
+        bd.step(1.0 / 60.0, false);
+        let mid = bd.current_color().expect("still visible");
+        assert!(mid.r > dark_app.r && mid.r < light_app.r);
+
+        for _ in 0..180 {
+            bd.step(1.0 / 60.0, false);
+        }
+        let settled = bd.current_color().unwrap();
+        assert!((settled.r - light_app.r).abs() < 0.01);
+
+        // Hiding fades smoothly to None.
+        bd.set_inactive(false);
+        assert!(bd.is_active());
+        for _ in 0..180 {
+            bd.step(1.0 / 60.0, false);
+        }
+        assert!(!bd.is_active());
+        assert_eq!(bd.current_color(), None);
     }
 }

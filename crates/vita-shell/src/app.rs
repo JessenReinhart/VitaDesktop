@@ -9,20 +9,20 @@ use iced::futures::SinkExt;
 use iced::futures::Stream;
 use iced::futures::channel::mpsc as futures_mpsc;
 use iced::keyboard::{self, Key, key::Named};
-use iced::widget::{image, operation};
-use iced::{Color, Element, Point, Size, Subscription, Task, stream, theme, window};
+use iced::widget::{container, image, operation};
+use iced::{Color, Element, Length, Padding, Point, Size, Subscription, Task, stream, theme, window};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use vita_core::{
-    ActiveAppMenu, AppCategory, CalendarStore, DecoratedWindowState, DecoratorMode,
-    DockBackgroundStyle, DockItem, DockMagnifier, DockVisibility, GlobalMenuCategory,
-    GlobalMenuItem, InstalledApp, LauncherViewMode, MonitorInfo, NotificationLevel, PhysicalRect,
-    PinnedApp, RgbaIcon, RunningWindow, ShellConfig, ShellPreset, SpaceInfo, SystemSummary,
-    ThemeTokens, ToastNotification, TopBarStyle, config::spawn_config_watcher,
-    filter_and_sort_apps, merge_dock_items, next_month, prev_month,
+    ActiveAppMenu, AppCategory, BackdropTransition, CalendarStore, DecoratedWindowState,
+    DecoratorMode, DockBackgroundStyle, DockItem, DockMagnifier, DockVisibility,
+    GlobalMenuCategory, GlobalMenuItem, InstalledApp, LauncherViewMode, MonitorInfo,
+    NotificationLevel, PhysicalRect, PinnedApp, RgbaColor, RgbaIcon, RunningWindow, ShellConfig,
+    ShellPreset, SpaceInfo, Spring, SystemSummary, ThemeTokens, ToastNotification, TopBarStyle,
+    config::spawn_config_watcher, filter_and_sort_apps, merge_dock_items, next_month, prev_month,
 };
 use vita_win32::{
     DecoratorTracker, DwmThumbnailHost, DwmWindowThemer, GlobalMenuWorker, HotkeyEvent,
@@ -34,9 +34,9 @@ use vita_win32::{
     launch_target, lock_workstation, minimize_window, monitor_index_from_cursor,
     position_window_bottom, primary_monitor, primary_monitor_index, read_system_summary,
     reposition_window_physical, resolve_aumid_icon, resolve_pinned_app_icon, restart_system,
-    restore_all_taskbars, rgb_to_colorref, set_display_brightness, set_master_mute,
-    set_master_volume, set_window_visible, shutdown_system, sleep_system, spawn_watchdog,
-    switch_to_space, system_prefers_dark, toggle_maximize_window,
+    restore_all_taskbars, rgb_to_colorref, sample_maximized_window_bg, set_display_brightness,
+    set_master_mute, set_master_volume, set_window_visible, shutdown_system, sleep_system,
+    spawn_watchdog, switch_to_space, system_prefers_dark, toggle_maximize_window,
 };
 
 static GLOBAL_MENU_RX: Mutex<Option<mpsc::UnboundedReceiver<Option<ActiveAppMenu>>>> =
@@ -56,23 +56,32 @@ fn is_top_tab_browser(exe_name: &str) -> bool {
     )
 }
 
-/// Resolves per-monitor title-bar tuck flags from the authoritative foreground window and
-/// top-to-bottom Z-ordered `running_windows` (`EnumWindows` order).
-fn resolve_tuck_flags(
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct MonitorMaximizedState {
+    frontmost_hwnd: Option<isize>,
+    should_tuck: bool,
+}
+
+/// Resolves the frontmost non-fullscreen maximized HWND and title-bar tuck flag per monitor
+/// from the authoritative foreground window and top-to-bottom Z-ordered `running_windows`.
+fn resolve_monitor_maximized_states(
     monitor_count: usize,
     decorated: Option<&DecoratedWindowState>,
     running_windows: &[RunningWindow],
-) -> Vec<bool> {
+) -> Vec<MonitorMaximizedState> {
     (0..monitor_count)
         .map(|mon_idx| {
             if let Some(d) = decorated
                 && d.monitor_idx == mon_idx
             {
                 if d.is_fullscreen {
-                    return false;
+                    return MonitorMaximizedState::default();
                 }
                 if d.is_maximized {
-                    return !is_top_tab_browser(&d.exe_name);
+                    return MonitorMaximizedState {
+                        frontmost_hwnd: Some(d.hwnd),
+                        should_tuck: !is_top_tab_browser(&d.exe_name),
+                    };
                 }
             }
 
@@ -87,11 +96,28 @@ fn resolve_tuck_flags(
                 if stale_non_max_hwnd == Some(w.hwnd) {
                     continue;
                 }
-                return !is_top_tab_browser(&w.exe_name);
+                return MonitorMaximizedState {
+                    frontmost_hwnd: Some(w.hwnd),
+                    should_tuck: !is_top_tab_browser(&w.exe_name),
+                };
             }
 
-            false
+            MonitorMaximizedState::default()
         })
+        .collect()
+}
+
+/// Resolves per-monitor title-bar tuck flags from the authoritative foreground window and
+/// top-to-bottom Z-ordered `running_windows` (`EnumWindows` order).
+#[cfg(test)]
+fn resolve_tuck_flags(
+    monitor_count: usize,
+    decorated: Option<&DecoratedWindowState>,
+    running_windows: &[RunningWindow],
+) -> Vec<bool> {
+    resolve_monitor_maximized_states(monitor_count, decorated, running_windows)
+        .into_iter()
+        .map(|s| s.should_tuck)
         .collect()
 }
 
@@ -120,6 +146,45 @@ enum SurfaceKind {
     WindowDecorator,
 }
 
+struct SurfaceAnim {
+    progress: Spring,
+    closing: bool,
+    slide_px: f32,
+    from_top: bool,
+    tokens: ThemeTokens,
+}
+
+fn wrap_surface_slide<'a>(
+    el: Element<'a, Message>,
+    anim: Option<&SurfaceAnim>,
+) -> Element<'a, Message> {
+    let Some(anim) = anim else {
+        return el;
+    };
+    if anim.slide_px <= 0.0 || anim.progress.value >= 0.999 {
+        return el;
+    }
+    let t = anim.progress.value.clamp(0.0, 1.0);
+    let offset = (1.0 - t) * anim.slide_px;
+    let padding = if anim.from_top {
+        Padding {
+            top: offset,
+            ..Padding::ZERO
+        }
+    } else {
+        Padding {
+            top: offset * 0.65,
+            bottom: offset * 0.35,
+            ..Padding::ZERO
+        }
+    };
+    container(el)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(padding)
+        .into()
+}
+
 struct MonitorShell {
     info: MonitorInfo,
     top_bar_id: window::Id,
@@ -127,12 +192,23 @@ struct MonitorShell {
     dock_magnifier: DockMagnifier,
     hovered_dock_idx: Option<usize>,
     dock_hidden: bool,
+    dock_hwnd_shown: bool,
     dock_last_trigger: Option<Instant>,
+    maximized_bg_hwnd: Option<isize>,
+    backdrop_transition: BackdropTransition,
+    pantheon_solid: Spring,
+    dock_reveal: Spring,
+    dock_tokens: ThemeTokens,
+    dock_tooltip_opacity: Spring,
+    dock_last_tooltip_idx: Option<usize>,
 }
 
 pub struct VitaShell {
     config: ShellConfig,
     tokens: ThemeTokens,
+    tokens_from: ThemeTokens,
+    tokens_target: ThemeTokens,
+    theme_transition: Spring,
     system_dark: bool,
     monitor_shells: Vec<MonitorShell>,
     top_bar_to_mon: HashMap<window::Id, usize>,
@@ -183,9 +259,11 @@ pub struct VitaShell {
     notif_id_to_wpn: HashMap<u64, String>,
     pinned_icons: HashMap<String, RgbaIcon>,
     dock_items: Vec<DockItem>,
+    icon_sources: HashMap<String, RgbaIcon>,
     icon_handles: HashMap<String, image::Handle>,
 
     tray_icons: Vec<TrayIconInfo>,
+    tray_icon_sources: HashMap<String, RgbaIcon>,
     tray_icon_handles: HashMap<String, image::Handle>,
     tray_popover_opened_at: Option<Instant>,
 
@@ -212,7 +290,7 @@ pub struct VitaShell {
     dock_preview_layout: Option<dock_thumbnails::PreviewStripLayout>,
     dwm_thumbnails: DwmThumbnailHost,
     dock_fallback_thumbs: HashMap<isize, image::Handle>,
-    dock_hover_preview: Option<(usize, usize, Instant)>,
+    dock_hover_preview: Option<(usize, usize, Instant, bool)>,
     dock_hover_outside_since: Option<Instant>,
     dock_popover_opened_by_hover: bool,
 
@@ -221,6 +299,7 @@ pub struct VitaShell {
     notifications_opened_at: Option<Instant>,
 
     last_anim_tick: Option<Instant>,
+    window_anims: HashMap<window::Id, SurfaceAnim>,
     dock_window_width: f32,
     dock_window_height: f32,
 
@@ -233,6 +312,7 @@ pub struct VitaShell {
     last_decorator_press: Option<(isize, Instant)>,
     tucked_monitors: Vec<bool>,
     tuck_height_applied: u32,
+    window_bg_cache: HashMap<isize, RgbaColor>,
 
     screenshot_dir: Option<PathBuf>,
     open_launcher_on_boot: bool,
@@ -359,7 +439,15 @@ impl VitaShell {
                 dock_magnifier: magnifier,
                 hovered_dock_idx: None,
                 dock_hidden: false,
+                dock_hwnd_shown: true,
                 dock_last_trigger: None,
+                maximized_bg_hwnd: None,
+                backdrop_transition: BackdropTransition::new(tokens.surface_base),
+                pantheon_solid: Spring::smooth(0.0),
+                dock_reveal: Spring::new(1.0, 260.0, 28.0),
+                dock_tokens: tokens,
+                dock_tooltip_opacity: Spring::snappy(0.0),
+                dock_last_tooltip_idx: None,
             });
         }
 
@@ -491,6 +579,9 @@ impl VitaShell {
         let state = Self {
             config,
             tokens,
+            tokens_from: tokens,
+            tokens_target: tokens,
+            theme_transition: Spring::smooth(1.0),
             system_dark,
             monitor_shells,
             top_bar_to_mon,
@@ -539,8 +630,10 @@ impl VitaShell {
             notif_id_to_wpn: HashMap::new(),
             pinned_icons: HashMap::new(),
             dock_items: initial_items,
+            icon_sources: HashMap::new(),
             icon_handles: HashMap::new(),
             tray_icons: Vec::new(),
+            tray_icon_sources: HashMap::new(),
             tray_icon_handles: HashMap::new(),
             tray_popover_opened_at: None,
             calendar_opened_at: None,
@@ -570,6 +663,7 @@ impl VitaShell {
             spaces_opened_at: None,
             notifications_opened_at: None,
             last_anim_tick: None,
+            window_anims: HashMap::new(),
             dock_window_width: dock_w,
             dock_window_height: dock_h,
             global_menu_worker,
@@ -581,6 +675,7 @@ impl VitaShell {
             last_decorator_press: None,
             tucked_monitors: Vec::new(),
             tuck_height_applied: 0,
+            window_bg_cache: HashMap::new(),
             screenshot_dir,
             open_launcher_on_boot,
             open_quick_controls_on_boot,
@@ -677,6 +772,7 @@ impl VitaShell {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::WindowOpened(id) => {
+                self.start_surface_open_anim(id);
                 window::raw_id::<u64>(id).map(move |raw| Message::WindowRawId(id, raw))
             }
             Message::WindowRawId(id, raw) => {
@@ -706,6 +802,7 @@ impl VitaShell {
                 window::Event::Closed => {
                     self.windows.remove(&id);
                     self.hwnds.remove(&id);
+                    self.window_anims.remove(&id);
                     self.top_bar_to_mon.remove(&id);
                     self.dock_to_mon.remove(&id);
                     for shell in &mut self.monitor_shells {
@@ -781,6 +878,7 @@ impl VitaShell {
                         return self.close_launcher();
                     }
                     if self.dock_popover_id == Some(id)
+                        && !self.dock_popover_opened_by_hover
                         && self
                             .dock_popover_opened_at
                             .is_some_and(|t| t.elapsed() > Duration::from_millis(220))
@@ -853,6 +951,23 @@ impl VitaShell {
             }
             Message::TelemetryUpdated(summary) => {
                 self.summary = summary;
+                if self.screenshot_dir.is_none()
+                    && self.config.top_bar.style == TopBarStyle::FloatingPills
+                    && self.config.decorator.enabled
+                    && self.config.decorator.hide_maximized_titlebar
+                {
+                    let targets: Vec<(usize, isize, MonitorInfo)> = self
+                        .monitor_shells
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(mon_idx, shell)| {
+                            shell
+                                .maximized_bg_hwnd
+                                .map(|hwnd| (mon_idx, hwnd, shell.info.clone()))
+                        })
+                        .collect();
+                    return self.spawn_maximized_bg_sample_task(targets, 0, false);
+                }
                 Task::none()
             }
             Message::WindowsUpdated(wins) => {
@@ -863,9 +978,14 @@ impl VitaShell {
                     return Task::none();
                 }
                 self.running_windows = wins.clone();
-                self.rebuild_dock_items();
+                let running = &self.running_windows;
+                let deco = self.decorated_window.as_ref();
+                self.window_bg_cache.retain(|hwnd, _| {
+                    running.iter().any(|w| w.hwnd == *hwnd) || deco.is_some_and(|d| d.hwnd == *hwnd)
+                });
+                let dock_resize_task = self.rebuild_dock_items();
                 self.update_dock_visibility();
-                self.sync_workarea_tuck();
+                let tuck_task = self.sync_workarea_tuck();
                 let picker_task = self.reconcile_open_window_picker();
                 let spaces_task = Task::perform(
                     async move {
@@ -875,7 +995,7 @@ impl VitaShell {
                     },
                     Message::SpacesUpdated,
                 );
-                Task::batch([picker_task, spaces_task])
+                Task::batch([dock_resize_task, tuck_task, picker_task, spaces_task])
             }
             Message::MonitorsChanged(monitors) => self.reconcile_monitors(monitors),
             Message::SpacesUpdated(spaces) => {
@@ -886,8 +1006,7 @@ impl VitaShell {
             }
             Message::PinnedIconsLoaded(icons) => {
                 self.pinned_icons.extend(icons);
-                self.rebuild_dock_items();
-                Task::none()
+                self.rebuild_dock_items()
             }
             Message::InstalledAppsLoaded(apps) => {
                 self.app_icon_handles.clear();
@@ -925,6 +1044,40 @@ impl VitaShell {
                     let handle =
                         image::Handle::from_rgba(ic.width, ic.height, ic.pixels.to_vec());
                     self.dock_fallback_thumbs.insert(hwnd, handle);
+                }
+                Task::none()
+            }
+            Message::MaximizedWindowColorsSampled {
+                samples,
+                allow_fallback,
+            } => {
+                let instant =
+                    self.config.accessibility.reduce_motion || self.screenshot_dir.is_some();
+                let fallback = self.tokens_target.surface_base;
+                let mut should_arm = false;
+                for (mon_idx, hwnd, maybe_color) in samples {
+                    if let Some(shell) = self.monitor_shells.get_mut(mon_idx)
+                        && shell.maximized_bg_hwnd == Some(hwnd)
+                    {
+                        if let Some(c) = maybe_color {
+                            self.window_bg_cache.insert(hwnd, c);
+                            shell.backdrop_transition.set_active_color(c, instant);
+                            if !instant && shell.backdrop_transition.is_active() {
+                                should_arm = true;
+                            }
+                        } else if allow_fallback
+                            && !self.window_bg_cache.contains_key(&hwnd)
+                            && shell.backdrop_transition.opacity() <= 0.03
+                        {
+                            shell.backdrop_transition.set_active_color(fallback, instant);
+                            if !instant && shell.backdrop_transition.is_active() {
+                                should_arm = true;
+                            }
+                        }
+                    }
+                }
+                if should_arm {
+                    self.arm_animation();
                 }
                 Task::none()
             }
@@ -1029,8 +1182,9 @@ impl VitaShell {
                 }
                 self.apply_dwm_theming();
                 self.update_dock_visibility();
-                self.sync_workarea_tuck();
-                self.sync_decorator_window()
+                let tuck_task = self.sync_workarea_tuck();
+                let deco_task = self.sync_decorator_window();
+                Task::batch([tuck_task, deco_task])
             }
             Message::DecoratorHeaderPressed(hwnd) => {
                 if hwnd == 0 {
@@ -1061,18 +1215,18 @@ impl VitaShell {
                 Task::none()
             }
             Message::DockPointerEntered(mon_idx) => {
-                self.last_anim_tick = Some(Instant::now());
                 if let Some(shell) = self.monitor_shells.get_mut(mon_idx) {
                     shell.dock_last_trigger = Some(Instant::now());
                 }
+                self.arm_animation();
                 Task::none()
             }
             Message::DockPointerMoved(mon_idx, pt) => {
-                if self.last_anim_tick.is_none() {
-                    self.last_anim_tick = Some(Instant::now());
-                }
                 let item_count = self.dock_items.len();
                 let base_size = self.config.dock.icon_size;
+                let reduce = self.config.accessibility.reduce_motion;
+                let hide_tip = self.dock_popover_id.is_some()
+                    && self.dock_popover_monitor_idx == mon_idx;
                 let hovered_idx = if let Some(shell) = self.monitor_shells.get_mut(mon_idx) {
                     let local_x = map_pointer_to_unscaled_x(
                         base_size,
@@ -1083,18 +1237,34 @@ impl VitaShell {
                     shell.dock_magnifier.set_pointer_x(Some(local_x));
                     shell.hovered_dock_idx = closest_slot(base_size, item_count, local_x);
                     shell.dock_last_trigger = Some(Instant::now());
+                    if !hide_tip && let Some(idx) = shell.hovered_dock_idx {
+                        shell.dock_last_tooltip_idx = Some(idx);
+                        shell.dock_tooltip_opacity.set_target(1.0);
+                    } else {
+                        shell.dock_tooltip_opacity.set_target(0.0);
+                    }
+                    if reduce {
+                        shell.dock_magnifier.step(0.0, true);
+                        shell.dock_tooltip_opacity.step(0.0, true);
+                        if shell.hovered_dock_idx.is_none() || hide_tip {
+                            shell.dock_last_tooltip_idx = None;
+                        }
+                    }
                     shell.hovered_dock_idx
                 } else {
                     None
                 };
+                if !reduce {
+                    self.arm_animation();
+                }
                 if let Some(idx) = hovered_idx
                     && self.dock_items.get(idx).is_some_and(DockItem::is_running)
                 {
                     let same = self
                         .dock_hover_preview
-                        .is_some_and(|(m, i, _)| m == mon_idx && i == idx);
+                        .is_some_and(|(m, i, _, _)| m == mon_idx && i == idx);
                     if !same {
-                        self.dock_hover_preview = Some((mon_idx, idx, Instant::now()));
+                        self.dock_hover_preview = Some((mon_idx, idx, Instant::now(), false));
                     }
                 } else {
                     self.dock_hover_preview = None;
@@ -1102,14 +1272,26 @@ impl VitaShell {
                 Task::none()
             }
             Message::DockPointerExited(mon_idx) => {
+                let reduce = self.config.accessibility.reduce_motion;
                 if let Some(shell) = self.monitor_shells.get_mut(mon_idx) {
                     shell.dock_magnifier.set_pointer_x(None);
                     shell.hovered_dock_idx = None;
+                    shell.dock_tooltip_opacity.set_target(0.0);
+                    if reduce {
+                        shell.dock_magnifier.step(0.0, true);
+                        shell.dock_tooltip_opacity.step(0.0, true);
+                        shell.dock_last_tooltip_idx = None;
+                    }
                 }
-                if self.dock_hover_preview.is_some_and(|(m, _, _)| m == mon_idx) {
+                if self
+                    .dock_hover_preview
+                    .is_some_and(|(m, _, _, _)| m == mon_idx)
+                {
                     self.dock_hover_preview = None;
                 }
-                self.last_anim_tick = Some(Instant::now());
+                if !reduce {
+                    self.arm_animation();
+                }
                 Task::none()
             }
             Message::AnimationFrame(now) => {
@@ -1119,15 +1301,99 @@ impl VitaShell {
                 self.last_anim_tick = Some(now);
                 let reduce = self.config.accessibility.reduce_motion;
                 let mut any_moving = false;
+
+                let theme_was_moving = !self.theme_transition.is_settled();
+                if self.theme_transition.step(dt, reduce) {
+                    any_moving = true;
+                }
+                let theme_moved = theme_was_moving || self.tokens != self.tokens_target;
+                if theme_moved {
+                    self.tokens = self
+                        .tokens_from
+                        .lerp(&self.tokens_target, self.theme_transition.value);
+                }
+
+                let hwnds = &self.hwnds;
+                let base_tokens = self.tokens;
                 for shell in &mut self.monitor_shells {
                     if shell.dock_magnifier.step(dt, reduce) {
                         any_moving = true;
                     }
+
+                    let reveal_was_moving = !shell.dock_reveal.is_settled();
+                    if shell.dock_reveal.step(dt, reduce) {
+                        any_moving = true;
+                    }
+                    if reveal_was_moving || theme_moved {
+                        shell.dock_tokens = base_tokens.with_opacity(shell.dock_reveal.value);
+                    }
+                    if shell.dock_hidden
+                        && shell.dock_hwnd_shown
+                        && shell.dock_reveal.is_settled()
+                        && shell.dock_reveal.value <= 0.01
+                        && let Some(dock_id) = shell.dock_id
+                        && let Some(&dock_hwnd) = hwnds.get(&dock_id)
+                    {
+                        set_window_visible(dock_hwnd, false);
+                        shell.dock_hwnd_shown = false;
+                    }
+
+                    if shell.dock_tooltip_opacity.step(dt, reduce) {
+                        any_moving = true;
+                    }
+                    if shell.dock_tooltip_opacity.is_settled()
+                        && shell.dock_tooltip_opacity.value <= 0.01
+                    {
+                        shell.dock_last_tooltip_idx = None;
+                    }
+
+                    if shell.backdrop_transition.step(dt, reduce) {
+                        any_moving = true;
+                    }
+                    if shell.pantheon_solid.step(dt, reduce) {
+                        any_moving = true;
+                    }
                 }
+
+                let mut expired_toast_close = false;
+                let toast_id = self.toast_id;
+                let dock_pop_id = self.dock_popover_id;
+                for (&win_id, anim) in &mut self.window_anims {
+                    let was_moving = !anim.progress.is_settled();
+                    if anim.progress.step(dt, reduce) {
+                        any_moving = true;
+                    }
+                    let op = anim.progress.value.clamp(0.0, 1.0);
+                    if was_moving || theme_moved {
+                        anim.tokens = base_tokens.with_opacity(op);
+                    }
+                    if dock_pop_id == Some(win_id) {
+                        let u8_op = if reduce {
+                            255
+                        } else {
+                            (op * 255.0).round().clamp(0.0, 255.0) as u8
+                        };
+                        self.dwm_thumbnails.set_opacity(u8_op);
+                    }
+                    if anim.closing
+                        && anim.progress.is_settled()
+                        && anim.progress.value <= 0.02
+                        && toast_id == Some(win_id)
+                    {
+                        expired_toast_close = true;
+                    }
+                }
+
                 if !any_moving {
                     self.last_anim_tick = None;
                 }
-                self.evaluate_dock_hover_preview()
+                let close_toast_task = if expired_toast_close {
+                    self.close_toast()
+                } else {
+                    Task::none()
+                };
+                let hover_task = self.evaluate_dock_hover_preview();
+                Task::batch([close_toast_task, hover_task])
             }
             Message::DockItemClicked(mon_idx, idx) => {
                 self.dock_hover_preview = None;
@@ -1412,6 +1678,16 @@ impl VitaShell {
             }
             Message::ToastExpired(id) => {
                 if self.active_toast.as_ref().is_some_and(|t| t.id == id) {
+                    if !self.config.accessibility.reduce_motion
+                        && self.screenshot_dir.is_none()
+                        && let Some(tid) = self.toast_id
+                        && let Some(anim) = self.window_anims.get_mut(&tid)
+                    {
+                        anim.closing = true;
+                        anim.progress.set_target(0.0);
+                        self.arm_animation();
+                        return Task::none();
+                    }
                     return self.close_toast();
                 }
                 Task::none()
@@ -1611,9 +1887,43 @@ impl VitaShell {
                 let snap = next.accessibility.reduce_motion;
                 let task = self.apply_new_config(next, true);
                 if snap {
+                    self.last_anim_tick = None;
+                    self.theme_transition.snap(1.0);
+                    self.tokens = self.tokens_target;
+                    self.tokens_from = self.tokens_target;
+                    let hwnds = &self.hwnds;
                     for shell in &mut self.monitor_shells {
                         shell.dock_magnifier.step(0.0, true);
+                        shell.dock_reveal.step(0.0, true);
+                        if shell.dock_hidden
+                            && shell.dock_hwnd_shown
+                            && let Some(dock_id) = shell.dock_id
+                            && let Some(&dock_hwnd) = hwnds.get(&dock_id)
+                        {
+                            set_window_visible(dock_hwnd, false);
+                            shell.dock_hwnd_shown = false;
+                        }
+                        shell.dock_tooltip_opacity.step(0.0, true);
+                        if shell.dock_tooltip_opacity.value <= 0.01 {
+                            shell.dock_last_tooltip_idx = None;
+                        }
+                        shell.backdrop_transition.step(0.0, true);
+                        shell.pantheon_solid.step(0.0, true);
                     }
+                    for anim in self.window_anims.values_mut() {
+                        anim.progress.step(0.0, true);
+                    }
+                    let close_closing_toast = if self
+                        .toast_id
+                        .is_some_and(|tid| self.window_anims.get(&tid).is_some_and(|a| a.closing))
+                    {
+                        self.close_toast()
+                    } else {
+                        Task::none()
+                    };
+                    self.dwm_thumbnails.set_opacity(255);
+                    self.sync_all_surface_anim_tokens();
+                    return Task::batch([task, close_closing_toast]);
                 }
                 task
             }
@@ -1985,11 +2295,7 @@ impl VitaShell {
                     .decorated_window
                     .as_ref()
                     .filter(|d| d.is_maximized && d.monitor_idx == mon_idx);
-                let has_maximized_window = self
-                    .tucked_monitors
-                    .get(mon_idx)
-                    .copied()
-                    .unwrap_or(false);
+                let shell = self.monitor_shells.get(mon_idx);
 
                 top_bar::view(top_bar::TopBarState {
                     config: &self.config,
@@ -2010,7 +2316,10 @@ impl VitaShell {
                     active_menu,
                     open_global_menu: self.open_global_menu,
                     maximized_window: max_win,
-                    has_maximized_window,
+                    backdrop_color: shell.and_then(|s| s.backdrop_transition.current_color()),
+                    backdrop_opacity: shell.map_or(0.0, |s| s.backdrop_transition.opacity()),
+                    pantheon_solid_progress: shell
+                        .map_or(0.0, |s| s.pantheon_solid.value.clamp(0.0, 1.0)),
                 })
             }
             Some(SurfaceKind::Dock) => {
@@ -2020,36 +2329,51 @@ impl VitaShell {
                     .copied()
                     .unwrap_or(self.primary_monitor_idx);
                 let shell = &self.monitor_shells[mon_idx];
-                let tooltip_idx =
-                    if self.dock_popover_id.is_some() && self.dock_popover_monitor_idx == mon_idx {
-                        None
-                    } else {
-                        shell.hovered_dock_idx
-                    };
+                let hide_tooltip =
+                    self.dock_popover_id.is_some() && self.dock_popover_monitor_idx == mon_idx;
+                let reveal = shell.dock_reveal.value;
+                let tooltip_opacity = shell.dock_tooltip_opacity.value;
+                let tooltip_idx = if !hide_tooltip && tooltip_opacity > 0.01 {
+                    shell.hovered_dock_idx.or(shell.dock_last_tooltip_idx)
+                } else {
+                    None
+                };
                 dock::view(
                     &self.config,
-                    &self.tokens,
+                    &shell.dock_tokens,
                     &self.dock_items,
                     &shell.dock_magnifier,
                     tooltip_idx,
                     &self.icon_handles,
                     active_space_name,
                     mon_idx,
+                    hide_tooltip,
+                    reveal,
+                    tooltip_opacity,
                 )
             }
-            Some(SurfaceKind::Launcher) => launcher::view(launcher::LauncherState {
-                config: &self.config,
-                tokens: &self.tokens,
-                apps: &self.installed_apps,
-                app_icons: &self.app_icon_handles,
-                query: &self.launcher_query,
-                view_mode: self.launcher_view_mode,
-                selected_category: self.launcher_category,
-                page: self.launcher_page,
-                selected_idx: self.launcher_selected_idx,
-                apps_loading: self.apps_loading,
-            }),
+            Some(SurfaceKind::Launcher) => {
+                let anim = self.window_anims.get(&id);
+                let tokens = anim.map_or(&self.tokens, |a| &a.tokens);
+                wrap_surface_slide(
+                    launcher::view(launcher::LauncherState {
+                        config: &self.config,
+                        tokens,
+                        apps: &self.installed_apps,
+                        app_icons: &self.app_icon_handles,
+                        query: &self.launcher_query,
+                        view_mode: self.launcher_view_mode,
+                        selected_category: self.launcher_category,
+                        page: self.launcher_page,
+                        selected_idx: self.launcher_selected_idx,
+                        apps_loading: self.apps_loading,
+                    }),
+                    anim,
+                )
+            }
             Some(SurfaceKind::DockPopover) => {
+                let anim = self.window_anims.get(&id);
+                let tokens = anim.map_or(&self.tokens, |a| &a.tokens);
                 if let Some(target) = &self.dock_popover_target
                     && let Some(item) = self
                         .dock_items
@@ -2058,14 +2382,14 @@ impl VitaShell {
                 {
                     match target.mode {
                         dock_menu::DockPopoverMode::ContextMenu => {
-                            dock_menu::view(&self.tokens, item, target.mode, &self.icon_handles)
+                            dock_menu::view(tokens, item, target.mode, &self.icon_handles)
                         }
                         dock_menu::DockPopoverMode::WindowPicker => {
                             if let Some(layout) = &self.dock_preview_layout {
                                 let live_dwm_active =
                                     self.screenshot_dir.is_none() && self.hwnds.contains_key(&id);
                                 dock_thumbnails::view(
-                                    &self.tokens,
+                                    tokens,
                                     item,
                                     layout,
                                     &self.icon_handles,
@@ -2083,50 +2407,82 @@ impl VitaShell {
                     iced::widget::Space::new().into()
                 }
             }
-            Some(SurfaceKind::QuickControls) => quick_controls::view(
-                &self.tokens,
-                &self.summary,
-                self.focus_mode,
-                self.power_confirm_open,
-            ),
-            Some(SurfaceKind::Spaces) => spaces::view(&self.tokens, &self.spaces),
+            Some(SurfaceKind::QuickControls) => {
+                let anim = self.window_anims.get(&id);
+                let tokens = anim.map_or(&self.tokens, |a| &a.tokens);
+                wrap_surface_slide(
+                    quick_controls::view(
+                        tokens,
+                        &self.summary,
+                        self.focus_mode,
+                        self.power_confirm_open,
+                    ),
+                    anim,
+                )
+            }
+            Some(SurfaceKind::Spaces) => {
+                let anim = self.window_anims.get(&id);
+                let tokens = anim.map_or(&self.tokens, |a| &a.tokens);
+                wrap_surface_slide(spaces::view(tokens, &self.spaces), anim)
+            }
             Some(SurfaceKind::CalmZone) => calm_zone::view(&self.config, &self.tokens, self.now),
             Some(SurfaceKind::Notifications) => {
-                notifications::view_center(&self.tokens, &self.notifications, self.focus_mode)
+                let anim = self.window_anims.get(&id);
+                let tokens = anim.map_or(&self.tokens, |a| &a.tokens);
+                wrap_surface_slide(
+                    notifications::view_center(tokens, &self.notifications, self.focus_mode),
+                    anim,
+                )
             }
             Some(SurfaceKind::Toast) => {
+                let anim = self.window_anims.get(&id);
+                let tokens = anim.map_or(&self.tokens, |a| &a.tokens);
                 if let Some(notif) = &self.active_toast {
-                    notifications::view_toast(&self.tokens, notif)
+                    wrap_surface_slide(notifications::view_toast(tokens, notif), anim)
                 } else {
                     iced::widget::Space::new().into()
                 }
             }
-            Some(SurfaceKind::TrayPopover) => tray::view(
-                &self.tokens,
-                &self.tray_icons,
-                &self.tray_icon_handles,
-                Message::TrayIconLeftClicked,
-                Message::TrayIconRightClicked,
-                Message::RefreshTrayIcons,
-            ),
-            Some(SurfaceKind::Calendar) => calendar::view(
-                &self.tokens,
-                self.now,
-                self.calendar_year,
-                self.calendar_month,
-                self.calendar_selected_date,
-                self.calendar_store.monday_first,
-                &self.calendar_store.events,
-                &self.calendar_draft,
-                Message::CalendarPrevMonth,
-                Message::CalendarNextMonth,
-                Message::CalendarToday,
-                Message::CalendarSelectDate,
-                Message::CalendarDraftChanged,
-                Message::CalendarAddEvent,
-                Message::CalendarToggleEvent,
-                Message::CalendarDeleteEvent,
-            ),
+            Some(SurfaceKind::TrayPopover) => {
+                let anim = self.window_anims.get(&id);
+                let tokens = anim.map_or(&self.tokens, |a| &a.tokens);
+                wrap_surface_slide(
+                    tray::view(
+                        tokens,
+                        &self.tray_icons,
+                        &self.tray_icon_handles,
+                        Message::TrayIconLeftClicked,
+                        Message::TrayIconRightClicked,
+                        Message::RefreshTrayIcons,
+                    ),
+                    anim,
+                )
+            }
+            Some(SurfaceKind::Calendar) => {
+                let anim = self.window_anims.get(&id);
+                let tokens = anim.map_or(&self.tokens, |a| &a.tokens);
+                wrap_surface_slide(
+                    calendar::view(
+                        tokens,
+                        self.now,
+                        self.calendar_year,
+                        self.calendar_month,
+                        self.calendar_selected_date,
+                        self.calendar_store.monday_first,
+                        &self.calendar_store.events,
+                        &self.calendar_draft,
+                        Message::CalendarPrevMonth,
+                        Message::CalendarNextMonth,
+                        Message::CalendarToday,
+                        Message::CalendarSelectDate,
+                        Message::CalendarDraftChanged,
+                        Message::CalendarAddEvent,
+                        Message::CalendarToggleEvent,
+                        Message::CalendarDeleteEvent,
+                    ),
+                    anim,
+                )
+            }
             Some(SurfaceKind::Settings) => settings::view(settings::SettingsState {
                 config: &self.config,
                 tokens: &self.tokens,
@@ -2139,15 +2495,22 @@ impl VitaShell {
                 config_path: &self.config_path_str,
             }),
             Some(SurfaceKind::GlobalMenu) => {
+                let anim = self.window_anims.get(&id);
+                let tokens = anim.map_or(&self.tokens, |a| &a.tokens);
                 let cat = self.selected_global_menu_category();
-                global_menu::view(&self.tokens, cat)
+                wrap_surface_slide(global_menu::view(tokens, cat), anim)
             }
             Some(SurfaceKind::WindowDecorator) => {
+                let anim = self.window_anims.get(&id);
+                let tokens = anim.map_or(&self.tokens, |a| &a.tokens);
                 if let Some(st) = &self.decorated_window {
                     let icon = self.decorator_icon.as_ref().and_then(|(h, img)| {
                         (*h == st.hwnd).then_some(img)
                     });
-                    window_decorator::view(&self.tokens, &self.config.decorator, st, icon)
+                    wrap_surface_slide(
+                        window_decorator::view(tokens, &self.config.decorator, st, icon),
+                        anim,
+                    )
                 } else {
                     iced::widget::Space::new().into()
                 }
@@ -2179,17 +2542,97 @@ impl VitaShell {
             subs.push(keyboard::listen().map(Message::KeyboardEvent));
         }
 
-        if self.monitor_shells.iter().any(|s| s.dock_magnifier.is_active()) {
+        if self.has_active_animations() {
             subs.push(window::frames().map(|_| Message::AnimationFrame(Instant::now())));
         }
 
-        if self.dock_hover_preview.is_some() || self.is_hover_window_picker_open() {
+        if self
+            .dock_hover_preview
+            .is_some_and(|(_, _, _, triggered)| !triggered)
+            || self.is_hover_window_picker_open()
+        {
             subs.push(
                 iced::time::every(Duration::from_millis(80)).map(|_| Message::DockSensorTick),
             );
         }
 
         Subscription::batch(subs)
+    }
+
+    fn arm_animation(&mut self) {
+        if !self.config.accessibility.reduce_motion && self.screenshot_dir.is_none() {
+            self.last_anim_tick.get_or_insert_with(Instant::now);
+        }
+    }
+
+    fn has_active_animations(&self) -> bool {
+        !self.theme_transition.is_settled()
+            || self.monitor_shells.iter().any(|s| {
+                s.dock_magnifier.is_active()
+                    || !s.dock_reveal.is_settled()
+                    || !s.dock_tooltip_opacity.is_settled()
+                    || s.backdrop_transition.is_active()
+                    || !s.pantheon_solid.is_settled()
+            })
+            || self
+                .window_anims
+                .values()
+                .any(|a| !a.progress.is_settled() || a.closing)
+    }
+
+    fn sync_all_surface_anim_tokens(&mut self) {
+        for shell in &mut self.monitor_shells {
+            shell.dock_tokens = self.tokens.with_opacity(shell.dock_reveal.value);
+        }
+        for anim in self.window_anims.values_mut() {
+            anim.tokens = self.tokens.with_opacity(anim.progress.value);
+        }
+    }
+
+    fn start_surface_open_anim(&mut self, id: window::Id) {
+        let Some(&kind) = self.windows.get(&id) else {
+            return;
+        };
+        let (slide_px, from_top) = match kind {
+            SurfaceKind::QuickControls
+            | SurfaceKind::Notifications
+            | SurfaceKind::TrayPopover
+            | SurfaceKind::Calendar
+            | SurfaceKind::GlobalMenu
+            | SurfaceKind::Toast => (6.0, true),
+            SurfaceKind::Launcher | SurfaceKind::Spaces | SurfaceKind::WindowDecorator => {
+                (8.0, false)
+            }
+            SurfaceKind::DockPopover => (0.0, false),
+            SurfaceKind::TopBar
+            | SurfaceKind::Dock
+            | SurfaceKind::CalmZone
+            | SurfaceKind::Settings => return,
+        };
+        let instant = self.config.accessibility.reduce_motion || self.screenshot_dir.is_some();
+        let (progress, tokens) = if instant {
+            (Spring::snappy(1.0), self.tokens)
+        } else {
+            let mut p = Spring::snappy(0.0);
+            p.set_target(1.0);
+            (p, self.tokens.with_opacity(0.0))
+        };
+        if kind == SurfaceKind::DockPopover {
+            self.dwm_thumbnails.set_opacity(if instant { 255 } else { 0 });
+        }
+        self.window_anims.insert(
+            id,
+            SurfaceAnim {
+                progress,
+                closing: false,
+                slide_px,
+                from_top,
+                tokens,
+            },
+        );
+        if !instant {
+            self.arm_animation();
+        }
     }
 
     fn monitor_infos(&self) -> Vec<MonitorInfo> {
@@ -2679,7 +3122,7 @@ impl VitaShell {
         self.windows.insert(id, SurfaceKind::TrayPopover);
         self.sync_decorator_window_visibility_and_bounds();
 
-        Task::batch([
+        let mut batch = vec![
             close_launcher,
             close_pop,
             close_qc,
@@ -2689,7 +3132,18 @@ impl VitaShell {
             close_gm,
             open_task.map(Message::WindowOpened),
             window::gain_focus(id),
-        ])
+        ];
+        if self.screenshot_dir.is_none() {
+            batch.push(Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(enumerate_tray_icons)
+                        .await
+                        .unwrap_or_default()
+                },
+                Message::TrayIconsUpdated,
+            ));
+        }
+        Task::batch(batch)
     }
 
     fn close_tray_popover(&mut self) -> Task<Message> {
@@ -2707,13 +3161,11 @@ impl VitaShell {
     }
 
     fn apply_tray_icons_snapshot(&mut self, icons: Vec<TrayIconInfo>) -> Task<Message> {
-        self.tray_icon_handles.clear();
-        for item in &icons {
-            if let Some(ic) = &item.icon {
-                let handle = image::Handle::from_rgba(ic.width, ic.height, ic.pixels.to_vec());
-                self.tray_icon_handles.insert(item.id.clone(), handle);
-            }
-        }
+        sync_rgba_icon_handles(
+            &mut self.tray_icon_sources,
+            &mut self.tray_icon_handles,
+            icons.iter().map(|item| (item.id.as_str(), item.icon.as_ref())),
+        );
         self.tray_icons = icons;
         if let Some(id) = self.tray_popover_id {
             self.apply_surface_chrome_and_bounds(id);
@@ -2934,6 +3386,7 @@ impl VitaShell {
         if let Some(id) = self.toast_id.take() {
             self.windows.remove(&id);
             self.hwnds.remove(&id);
+            self.window_anims.remove(&id);
             window::close(id)
         } else {
             Task::none()
@@ -3003,10 +3456,29 @@ impl VitaShell {
         let mon_idx = mon_idx.min(self.monitor_shells.len().saturating_sub(1));
         self.active_monitor_idx = mon_idx;
         self.dock_popover_monitor_idx = mon_idx;
+        if let Some(shell) = self.monitor_shells.get_mut(mon_idx) {
+            shell.dock_tooltip_opacity.set_target(0.0);
+            if self.config.accessibility.reduce_motion {
+                shell.dock_tooltip_opacity.step(0.0, true);
+                shell.dock_last_tooltip_idx = None;
+            }
+        }
+        self.arm_animation();
         let Some(item) = self.dock_items.get(idx).cloned() else {
             return Task::none();
         };
-        let close_existing = self.close_dock_popover();
+
+        let reuse_existing = opened_by_hover
+            && mode == dock_menu::DockPopoverMode::WindowPicker
+            && self.dock_popover_id.is_some()
+            && self.dock_popover_opened_by_hover
+            && self.dock_popover_monitor_idx == mon_idx;
+
+        let close_existing = if reuse_existing {
+            Task::none()
+        } else {
+            self.close_dock_popover()
+        };
         let close_launcher = self.close_launcher();
         let close_qc = self.close_quick_controls();
         let close_sp = self.close_spaces();
@@ -3035,6 +3507,28 @@ impl VitaShell {
 
         let (log_rect, _) = self.compute_dock_popover_geometry(&mon, &item, &target);
 
+        if reuse_existing && let Some(existing_id) = self.dock_popover_id {
+            self.dock_fallback_thumbs.clear();
+            self.dock_popover_opened_at = Some(Instant::now());
+            self.dock_popover_target = Some(target);
+            self.dock_popover_opened_by_hover = true;
+            self.dock_hover_outside_since = None;
+            self.apply_surface_chrome_and_bounds(existing_id);
+            let resize_task = window::resize(existing_id, Size::new(log_rect.width, log_rect.height));
+            let thumb_task = self.sync_dock_thumbnail_slots();
+            return Task::batch([
+                close_launcher,
+                close_qc,
+                close_sp,
+                close_nf,
+                close_tr,
+                close_cal,
+                close_gm,
+                resize_task,
+                thumb_task,
+            ]);
+        }
+
         let (id, open_task) = window::open(window::Settings {
             size: Size::new(log_rect.width, log_rect.height),
             position: window::Position::Specific(Point::new(log_rect.x, log_rect.y)),
@@ -3054,7 +3548,7 @@ impl VitaShell {
         self.sync_decorator_window_visibility_and_bounds();
         let thumb_task = self.sync_dock_thumbnail_slots();
 
-        Task::batch([
+        let mut tasks = vec![
             close_existing,
             close_launcher,
             close_qc,
@@ -3064,9 +3558,12 @@ impl VitaShell {
             close_cal,
             close_gm,
             open_task.map(Message::WindowOpened),
-            window::gain_focus(id),
             thumb_task,
-        ])
+        ];
+        if !opened_by_hover {
+            tasks.push(window::gain_focus(id));
+        }
+        Task::batch(tasks)
     }
 
     fn close_dock_popover(&mut self) -> Task<Message> {
@@ -3074,12 +3571,24 @@ impl VitaShell {
         self.dock_preview_layout = None;
         self.dock_popover_opened_by_hover = false;
         self.dock_hover_outside_since = None;
+        let pop_mon = self.dock_popover_monitor_idx;
         if let Some(id) = self.dock_popover_id.take() {
             self.dock_fallback_thumbs.clear();
             self.dock_popover_opened_at = None;
             self.dock_popover_target = None;
             self.windows.remove(&id);
             self.hwnds.remove(&id);
+            self.window_anims.remove(&id);
+            if let Some(shell) = self.monitor_shells.get_mut(pop_mon)
+                && let Some(idx) = shell.hovered_dock_idx
+            {
+                shell.dock_last_tooltip_idx = Some(idx);
+                shell.dock_tooltip_opacity.set_target(1.0);
+                if self.config.accessibility.reduce_motion {
+                    shell.dock_tooltip_opacity.step(0.0, true);
+                }
+            }
+            self.arm_animation();
             self.sync_decorator_window_visibility_and_bounds();
             window::close(id)
         } else {
@@ -3125,7 +3634,7 @@ impl VitaShell {
         let dock_w_px = (self.dock_window_width * dpi).round() as i32;
         let dock_h_px = ((dock::pill_height(&self.config)
             + dock::bottom_margin(&self.config)
-            + 14.0)
+            + 40.0)
             * dpi)
             .round() as i32;
         PhysicalRect {
@@ -3193,14 +3702,22 @@ impl VitaShell {
             return Task::none();
         }
 
-        let Some((mon_idx, item_idx, entered_at)) = self.dock_hover_preview else {
+        let Some((mon_idx, item_idx, entered_at, triggered)) = self.dock_hover_preview else {
             return Task::none();
         };
+        if triggered {
+            return Task::none();
+        }
         if !self.is_cursor_in_dock_band(mon_idx, cursor) {
             self.dock_hover_preview = None;
             return Task::none();
         }
-        if entered_at.elapsed() < Duration::from_millis(400) {
+        let dwell = if self.is_hover_window_picker_open() {
+            Duration::from_millis(140)
+        } else {
+            Duration::from_millis(520)
+        };
+        if entered_at.elapsed() < dwell {
             return Task::none();
         }
         let Some(item) = self.dock_items.get(item_idx) else {
@@ -3217,7 +3734,9 @@ impl VitaShell {
             && self.dock_popover_target.as_ref().is_some_and(|t| {
                 t.mode == dock_menu::DockPopoverMode::WindowPicker && t.dock_item_id == item.id
             });
-        self.dock_hover_preview = None;
+        if let Some((_, _, _, is_triggered)) = &mut self.dock_hover_preview {
+            *is_triggered = true;
+        }
         if already_open_for_item {
             return Task::none();
         }
@@ -3476,7 +3995,22 @@ impl VitaShell {
         let old_hide_tb = self.config.hide_native_taskbar;
         self.config = cfg;
         self.system_dark = system_prefers_dark();
-        self.tokens = resolve_tokens(&self.config, self.system_dark);
+        let new_tokens = resolve_tokens(&self.config, self.system_dark);
+        if new_tokens != self.tokens_target {
+            if self.config.accessibility.reduce_motion || self.screenshot_dir.is_some() {
+                self.tokens_from = new_tokens;
+                self.tokens_target = new_tokens;
+                self.tokens = new_tokens;
+                self.theme_transition.snap(1.0);
+            } else {
+                self.tokens_from = self.tokens;
+                self.tokens_target = new_tokens;
+                self.theme_transition.snap(0.0);
+                self.theme_transition.set_target(1.0);
+                self.arm_animation();
+            }
+        }
+        self.sync_all_surface_anim_tokens();
         for shell in &mut self.monitor_shells {
             shell.dock_magnifier.update_params(
                 self.config.dock.magnification_scale,
@@ -3503,7 +4037,7 @@ impl VitaShell {
                 );
             }
         }
-        self.sync_workarea_tuck();
+        let tuck_task = self.sync_workarea_tuck();
 
         let dock_task = self.reconcile_dock_windows();
 
@@ -3552,10 +4086,16 @@ impl VitaShell {
 
         self.apply_dwm_theming();
         let deco_task = self.sync_decorator_window();
-        self.rebuild_dock_items();
+        let dock_rebuild_task = self.rebuild_dock_items();
         self.update_dock_visibility();
         let calm_task = self.sync_calm_zone();
-        Task::batch([dock_task, deco_task, calm_task])
+        Task::batch([
+            tuck_task,
+            dock_task,
+            dock_rebuild_task,
+            deco_task,
+            calm_task,
+        ])
     }
 
     fn reconcile_dock_windows(&mut self) -> Task<Message> {
@@ -3681,15 +4221,24 @@ impl VitaShell {
                 dock_magnifier: magnifier,
                 hovered_dock_idx: None,
                 dock_hidden: false,
+                dock_hwnd_shown: true,
                 dock_last_trigger: None,
+                maximized_bg_hwnd: None,
+                backdrop_transition: BackdropTransition::new(self.tokens.surface_base),
+                pantheon_solid: Spring::smooth(0.0),
+                dock_reveal: Spring::new(1.0, 260.0, 28.0),
+                dock_tokens: self.tokens,
+                dock_tooltip_opacity: Spring::snappy(0.0),
+                dock_last_tooltip_idx: None,
             });
         }
 
         self.tucked_monitors.clear();
-        self.sync_workarea_tuck();
+        let tuck_task = self.sync_workarea_tuck();
 
         let calm_task = self.sync_calm_zone();
         close_tasks.extend(open_tasks);
+        close_tasks.push(tuck_task);
         close_tasks.push(calm_task);
         Task::batch(close_tasks)
     }
@@ -3771,49 +4320,211 @@ impl VitaShell {
                 }
             };
 
-            if want_hide != self.monitor_shells[mon_idx].dock_hidden {
-                self.monitor_shells[mon_idx].dock_hidden = want_hide;
-                set_window_visible(dock_hwnd, !want_hide);
+            let reduce = self.config.accessibility.reduce_motion;
+            let tokens = self.tokens;
+            let shell = &mut self.monitor_shells[mon_idx];
+            if want_hide != shell.dock_hidden {
+                shell.dock_hidden = want_hide;
+                if reduce {
+                    if want_hide {
+                        shell.dock_reveal.snap(0.0);
+                        if shell.dock_hwnd_shown {
+                            set_window_visible(dock_hwnd, false);
+                            shell.dock_hwnd_shown = false;
+                        }
+                    } else {
+                        if !shell.dock_hwnd_shown {
+                            set_window_visible(dock_hwnd, true);
+                            shell.dock_hwnd_shown = true;
+                        }
+                        shell.dock_reveal.snap(1.0);
+                    }
+                    shell.dock_tokens = tokens.with_opacity(shell.dock_reveal.value);
+                } else {
+                    if !want_hide && !shell.dock_hwnd_shown {
+                        set_window_visible(dock_hwnd, true);
+                        shell.dock_hwnd_shown = true;
+                    }
+                    shell.dock_reveal.set_target(if want_hide { 0.0 } else { 1.0 });
+                    self.arm_animation();
+                }
+                if want_hide && let Some(s) = self.monitor_shells.get_mut(mon_idx) {
+                    s.hovered_dock_idx = None;
+                    s.dock_tooltip_opacity.set_target(0.0);
+                    if reduce {
+                        s.dock_tooltip_opacity.step(0.0, true);
+                        s.dock_last_tooltip_idx = None;
+                    }
+                }
             }
         }
     }
 
-    /// Monitors where the active/frontmost maximized window should have its own title bar hidden
-    /// behind the (opaque) Top Bar.
-    fn compute_tuck_flags(&self) -> Vec<bool> {
+    fn compute_maximized_states(&self) -> (Vec<bool>, Vec<Option<isize>>) {
         let count = self.monitor_shells.len();
-        if self.screenshot_dir.is_some()
+        if (self.screenshot_dir.is_some() && !self.open_global_menu_on_boot)
             || !self.config.decorator.enabled
             || !self.config.decorator.hide_maximized_titlebar
         {
-            return vec![false; count];
+            return (vec![false; count], vec![None; count]);
         }
-        if DEBUG_FORCE_TUCK.load(std::sync::atomic::Ordering::Relaxed) {
-            return vec![true; count];
-        }
-        resolve_tuck_flags(count, self.decorated_window.as_ref(), &self.running_windows)
+        let states = resolve_monitor_maximized_states(
+            count,
+            self.decorated_window.as_ref(),
+            &self.running_windows,
+        );
+        let tuck_flags = if DEBUG_FORCE_TUCK.load(std::sync::atomic::Ordering::Relaxed) {
+            vec![true; count]
+        } else {
+            states.iter().map(|s| s.should_tuck).collect()
+        };
+        let frontmost_hwnds = states.into_iter().map(|s| s.frontmost_hwnd).collect();
+        (tuck_flags, frontmost_hwnds)
     }
 
-    /// Recomputes which monitors tuck their maximized title bar and re-applies work areas on change.
-    fn sync_workarea_tuck(&mut self) {
-        let flags = self.compute_tuck_flags();
+    fn spawn_maximized_bg_sample_task(
+        &self,
+        targets: Vec<(usize, isize, MonitorInfo)>,
+        delay_ms: u64,
+        allow_fallback: bool,
+    ) -> Task<Message> {
+        if targets.is_empty() {
+            return Task::none();
+        }
+        let top_bar_h = self.config.top_bar.height;
+        Task::perform(
+            async move {
+                if delay_ms > 0 {
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                }
+                let samples = tokio::task::spawn_blocking(move || {
+                    targets
+                        .into_iter()
+                        .map(|(mon_idx, hwnd, mon)| {
+                            (mon_idx, hwnd, sample_maximized_window_bg(hwnd, &mon, top_bar_h))
+                        })
+                        .collect()
+                })
+                .await
+                .unwrap_or_default();
+                Message::MaximizedWindowColorsSampled {
+                    samples,
+                    allow_fallback,
+                }
+            },
+            std::convert::identity,
+        )
+    }
+
+    /// Recomputes per-monitor title-bar tuck state, applies work-area changes, and schedules
+    /// smooth backdrop fade/color-matching transitions for Top Bar windows.
+    fn sync_workarea_tuck(&mut self) -> Task<Message> {
+        let prev_tucked = self.tucked_monitors.clone();
+        let (flags, max_hwnds) = self.compute_maximized_states();
         let height = self.config.decorator.maximized_titlebar_height.clamp(24, 44);
-        if flags == self.tucked_monitors && height == self.tuck_height_applied {
-            return;
+        if flags != self.tucked_monitors || height != self.tuck_height_applied {
+            self.tucked_monitors = flags.clone();
+            self.tuck_height_applied = height;
+            let monitors = self.monitor_infos();
+            let bottom_reserve = bottom_reserve_for_config(&self.config);
+            if let Ok(mut wg) = self.work_area_guard.lock() {
+                wg.set_tucked_monitors(flags.clone(), height);
+                wg.apply(
+                    &monitors,
+                    self.config.top_bar.height,
+                    bottom_reserve,
+                    self.config.hide_native_taskbar,
+                );
+            }
         }
-        self.tucked_monitors = flags.clone();
-        self.tuck_height_applied = height;
-        let monitors = self.monitor_infos();
-        let bottom_reserve = bottom_reserve_for_config(&self.config);
-        if let Ok(mut wg) = self.work_area_guard.lock() {
-            wg.set_tucked_monitors(flags, height);
-            wg.apply(
-                &monitors,
-                self.config.top_bar.height,
-                bottom_reserve,
-                self.config.hide_native_taskbar,
-            );
+
+        let instant = self.config.accessibility.reduce_motion || self.screenshot_dir.is_some();
+        let debug_force = DEBUG_FORCE_TUCK.load(std::sync::atomic::Ordering::Relaxed);
+        let islands_active = self.config.top_bar.style == TopBarStyle::FloatingPills
+            && self.config.decorator.enabled
+            && self.config.decorator.hide_maximized_titlebar;
+        let fallback_bg = self.tokens_target.surface_base;
+        let mut fast_targets = Vec::new();
+        let mut settle_targets = Vec::new();
+        let mut confirm_targets = Vec::new();
+        let mut should_arm = false;
+
+        for (mon_idx, shell) in self.monitor_shells.iter_mut().enumerate() {
+            let tucked_now = flags.get(mon_idx).copied().unwrap_or(false);
+            let pantheon_target = if tucked_now { 1.0 } else { 0.0 };
+            if instant {
+                shell.pantheon_solid.snap(pantheon_target);
+            } else {
+                shell.pantheon_solid.set_target(pantheon_target);
+                if !shell.pantheon_solid.is_settled() {
+                    should_arm = true;
+                }
+            }
+
+            let maybe_hwnd = if islands_active {
+                max_hwnds.get(mon_idx).copied().flatten()
+            } else {
+                None
+            };
+            if let Some(hwnd) = maybe_hwnd {
+                let prev_hwnd = shell.maximized_bg_hwnd;
+                let hwnd_changed = prev_hwnd != Some(hwnd);
+                let just_tucked =
+                    !prev_tucked.get(mon_idx).copied().unwrap_or(false) && tucked_now;
+                shell.maximized_bg_hwnd = Some(hwnd);
+
+                if self.screenshot_dir.is_some() {
+                    let c = self
+                        .decorated_window
+                        .as_ref()
+                        .filter(|d| d.hwnd == hwnd)
+                        .and_then(|d| d.titlebar_bg)
+                        .unwrap_or(fallback_bg);
+                    shell.backdrop_transition.set_active_color(c, true);
+                } else if let Some(&cached) = self.window_bg_cache.get(&hwnd) {
+                    if hwnd_changed || shell.backdrop_transition.opacity() <= 0.03 {
+                        shell.backdrop_transition.set_active_color(cached, instant);
+                    }
+                    if hwnd_changed || just_tucked {
+                        if prev_hwnd.is_some() && !just_tucked {
+                            fast_targets.push((mon_idx, hwnd, shell.info.clone()));
+                        } else {
+                            settle_targets.push((mon_idx, hwnd, shell.info.clone()));
+                        }
+                    }
+                } else if hwnd_changed {
+                    if prev_hwnd.is_some() {
+                        fast_targets.push((mon_idx, hwnd, shell.info.clone()));
+                    } else {
+                        settle_targets.push((mon_idx, hwnd, shell.info.clone()));
+                        confirm_targets.push((mon_idx, hwnd, shell.info.clone()));
+                    }
+                } else if just_tucked {
+                    settle_targets.push((mon_idx, hwnd, shell.info.clone()));
+                }
+            } else {
+                shell.maximized_bg_hwnd = None;
+                if islands_active && debug_force && tucked_now {
+                    shell.backdrop_transition.set_active_color(fallback_bg, instant);
+                } else {
+                    shell.backdrop_transition.set_inactive(instant);
+                }
+            }
+
+            if !instant && shell.backdrop_transition.is_active() {
+                should_arm = true;
+            }
         }
+
+        if should_arm {
+            self.arm_animation();
+        }
+
+        Task::batch([
+            self.spawn_maximized_bg_sample_task(fast_targets, 60, true),
+            self.spawn_maximized_bg_sample_task(settle_targets, 180, false),
+            self.spawn_maximized_bg_sample_task(confirm_targets, 360, true),
+        ])
     }
 
     fn apply_dwm_theming(&mut self) {
@@ -3982,9 +4693,10 @@ impl VitaShell {
                 is_fullscreen: false,
                 mode: DecoratorMode::ControlsOnly,
                 monitor_idx: mon_idx,
-                titlebar_bg: None,
+                titlebar_bg: Some(RgbaColor::from_hex("#1F2330")),
                 icon: None,
             });
+            tasks.push(self.sync_workarea_tuck());
             tasks.push(self.open_global_menu_dropdown(mon_idx, 1));
         }
 
@@ -4078,9 +4790,11 @@ impl VitaShell {
         ];
 
         let mut list = Vec::with_capacity(demos.len());
+        self.tray_icon_sources.clear();
         self.tray_icon_handles.clear();
         for (id, tooltip, exe_name, is_overflow, rgb) in demos {
             let icon = make_demo_badge_icon(24, rgb);
+            self.tray_icon_sources.insert(id.to_string(), icon.clone());
             self.tray_icon_handles.insert(
                 id.to_string(),
                 image::Handle::from_rgba(icon.width, icon.height, icon.pixels.to_vec()),
@@ -4165,7 +4879,7 @@ impl VitaShell {
         );
 
         self.running_windows = demo_windows;
-        self.rebuild_dock_items();
+        let _ = self.rebuild_dock_items();
         self.dock_items
             .iter()
             .position(|i| i.exe_name.eq_ignore_ascii_case(&exe_name))
@@ -4184,20 +4898,19 @@ impl VitaShell {
         restore_all_taskbars();
     }
 
-    fn rebuild_dock_items(&mut self) {
+    fn rebuild_dock_items(&mut self) -> Task<Message> {
         self.dock_items = merge_dock_items(
             &self.config.dock.pinned_apps,
             &self.running_windows,
             &self.pinned_icons,
         );
-        self.icon_handles.clear();
-        for item in &self.dock_items {
-            if let Some(icon) = &item.icon {
-                let handle =
-                    image::Handle::from_rgba(icon.width, icon.height, icon.pixels.to_vec());
-                self.icon_handles.insert(item.id.clone(), handle);
-            }
-        }
+        sync_rgba_icon_handles(
+            &mut self.icon_sources,
+            &mut self.icon_handles,
+            self.dock_items
+                .iter()
+                .map(|item| (item.id.as_str(), item.icon.as_ref())),
+        );
 
         let (new_w, slot_centers) = dock::compute_dock_layout(&self.config, self.dock_items.len());
         let new_h = dock::window_height(&self.config);
@@ -4211,10 +4924,14 @@ impl VitaShell {
         if resized {
             let dock_ids: Vec<window::Id> =
                 self.monitor_shells.iter().filter_map(|s| s.dock_id).collect();
+            let mut tasks = Vec::with_capacity(dock_ids.len());
             for did in dock_ids {
                 self.apply_surface_chrome_and_bounds(did);
+                tasks.push(window::resize(did, Size::new(new_w, new_h)));
             }
+            return Task::batch(tasks);
         }
+        Task::none()
     }
 
     fn apply_surface_chrome_and_bounds(&self, id: window::Id) {
@@ -4320,9 +5037,14 @@ impl VitaShell {
                     .map(|s| &s.info)
                     .unwrap_or(&self.monitor_shells[0].info);
                 let dpi = mon.dpi_scale;
+                let role = if self.dock_popover_opened_by_hover {
+                    ShellWindowRole::HoverPopover
+                } else {
+                    ShellWindowRole::Popover
+                };
                 configure_shell_window(
                     hwnd_raw,
-                    ShellWindowRole::Popover,
+                    role,
                     self.tokens.is_dark,
                     frosted,
                 );
@@ -4758,6 +5480,32 @@ fn empty_cat(label: &str) -> GlobalMenuCategory {
     }
 }
 
+/// Retains existing GPU `image::Handle`s whenever an item's `RgbaIcon` pixels are unchanged,
+/// preventing texture re-uploads and dock/tray flicker across frequent window updates.
+fn sync_rgba_icon_handles<'a>(
+    sources: &mut HashMap<String, RgbaIcon>,
+    handles: &mut HashMap<String, image::Handle>,
+    items: impl Iterator<Item = (&'a str, Option<&'a RgbaIcon>)>,
+) {
+    let mut keep = std::collections::HashSet::new();
+    for (id, icon) in items {
+        if let Some(ic) = icon {
+            keep.insert(id.to_string());
+            let unchanged =
+                sources.get(id).is_some_and(|prev| prev == ic) && handles.contains_key(id);
+            if !unchanged {
+                sources.insert(id.to_string(), ic.clone());
+                handles.insert(
+                    id.to_string(),
+                    image::Handle::from_rgba(ic.width, ic.height, ic.pixels.to_vec()),
+                );
+            }
+        }
+    }
+    sources.retain(|k, _| keep.contains(k));
+    handles.retain(|k, _| keep.contains(k));
+}
+
 fn dock_popover_bounds(
     config: &ShellConfig,
     mon: &MonitorInfo,
@@ -4775,7 +5523,7 @@ fn dock_popover_bounds(
         - dock::pill_height(config)
         - dock::bottom_margin(config)
         - pop_h
-        + 6.0)
+        - 22.0)
         .max(min_y);
     let log_rect = vita_core::LogicalRect {
         x,
@@ -5016,7 +5764,7 @@ fn shell_backend_worker() -> impl Stream<Item = Message> {
                         if same_topology
                             && let Ok(slot) = WORK_AREA_SHARED.lock()
                             && let Some(guard) = &*slot
-                            && let Ok(g) = guard.lock()
+                            && let Ok(mut g) = guard.lock()
                         {
                             g.ensure_applied();
                         }
@@ -5168,6 +5916,46 @@ mod tests {
     }
 
     #[test]
+    fn resolve_monitor_maximized_states_matches_browsers_without_tucking() {
+        let code = fake_decorated(101, "Code.exe", 0, true, false);
+        let windows = vec![
+            fake_running(101, "Code.exe", 0, true, false, true),
+            fake_running(202, "explorer.exe", 1, true, false, false),
+            fake_running(303, "msedge.exe", 2, true, false, false),
+        ];
+        assert_eq!(
+            resolve_monitor_maximized_states(3, Some(&code), &windows),
+            vec![
+                MonitorMaximizedState {
+                    frontmost_hwnd: Some(101),
+                    should_tuck: true,
+                },
+                MonitorMaximizedState {
+                    frontmost_hwnd: Some(202),
+                    should_tuck: true,
+                },
+                MonitorMaximizedState {
+                    frontmost_hwnd: Some(303),
+                    should_tuck: false,
+                },
+            ]
+        );
+
+        let edge_front = fake_decorated(303, "msedge.exe", 0, true, false);
+        let stacked = vec![
+            fake_running(303, "msedge.exe", 0, true, false, true),
+            fake_running(101, "Code.exe", 0, true, false, false),
+        ];
+        assert_eq!(
+            resolve_monitor_maximized_states(1, Some(&edge_front), &stacked),
+            vec![MonitorMaximizedState {
+                frontmost_hwnd: Some(303),
+                should_tuck: false,
+            }]
+        );
+    }
+
+    #[test]
     fn reconcile_wpn_seeds_without_toast_then_surfaces_new_and_respects_dismissed() {
         let mut seeded = false;
         let mut seen = HashSet::new();
@@ -5278,10 +6066,62 @@ mod tests {
         assert!(left_log.x >= logical.x + 8.0);
         assert!(left_log.x + left_log.width <= logical.x + logical.width - 8.0);
         assert!(left_log.y >= logical.y + cfg.top_bar.height as f32 + 4.0);
+        // Popover bottom clears the top of the dock pill so it does not overlap magnified icons.
+        let pill_top =
+            logical.y + logical.height - dock::pill_height(&cfg) - dock::bottom_margin(&cfg);
+        assert!(left_log.y + left_log.height <= pill_top - 22.0 + 0.01);
 
         // Near right edge
         let (right_log, _) = dock_popover_bounds(&cfg, &mon, logical.width - 20.0, 444.0, 212.0);
         assert!(right_log.x >= logical.x + 8.0);
         assert!(right_log.x + right_log.width <= logical.x + logical.width - 8.0);
+    }
+
+    #[test]
+    fn sync_rgba_icon_handles_preserves_handles_when_pixels_unchanged() {
+        let icon_a = RgbaIcon {
+            width: 2,
+            height: 2,
+            pixels: std::sync::Arc::from(vec![255u8; 16]),
+        };
+        let icon_b = RgbaIcon {
+            width: 2,
+            height: 2,
+            pixels: std::sync::Arc::from(vec![128u8; 16]),
+        };
+        let mut sources = HashMap::new();
+        let mut handles = HashMap::new();
+
+        sync_rgba_icon_handles(
+            &mut sources,
+            &mut handles,
+            [("a", Some(&icon_a)), ("b", Some(&icon_b))].into_iter(),
+        );
+        let orig_handle_a = handles.get("a").expect("handle a").id();
+        let orig_handle_b = handles.get("b").expect("handle b").id();
+
+        // Identical icon content should retain the exact same Iced handle ID (no GPU upload).
+        let icon_a_clone = RgbaIcon {
+            width: 2,
+            height: 2,
+            pixels: std::sync::Arc::from(vec![255u8; 16]),
+        };
+        let icon_b_changed = RgbaIcon {
+            width: 2,
+            height: 2,
+            pixels: std::sync::Arc::from(vec![64u8; 16]),
+        };
+        sync_rgba_icon_handles(
+            &mut sources,
+            &mut handles,
+            [("a", Some(&icon_a_clone)), ("b", Some(&icon_b_changed))].into_iter(),
+        );
+        assert_eq!(handles.get("a").expect("handle a").id(), orig_handle_a);
+        assert_ne!(handles.get("b").expect("handle b").id(), orig_handle_b);
+
+        // Removing an item prunes its cached handle.
+        sync_rgba_icon_handles(&mut sources, &mut handles, [("a", Some(&icon_a_clone))].into_iter());
+        assert!(handles.contains_key("a"));
+        assert!(!handles.contains_key("b"));
     }
 }

@@ -91,7 +91,12 @@ pub fn view<'a>(
     icon_handles: &'a HashMap<String, image::Handle>,
     active_space_name: &'a str,
     monitor_idx: usize,
+    hide_tooltip: bool,
+    reveal: f32,
+    tooltip_opacity: f32,
 ) -> Element<'a, Message> {
+    let reveal = reveal.clamp(0.0, 1.0);
+    let tip_op = (tooltip_opacity * reveal).clamp(0.0, 1.0);
     let base_size = config.dock.icon_size as f32;
     let icon_fg = color(tokens.text_primary);
     let muted_fg = color(tokens.text_secondary);
@@ -113,6 +118,7 @@ pub fn view<'a>(
             image(handle.clone())
                 .width(scaled_size)
                 .height(scaled_size)
+                .opacity(reveal)
                 .into()
         } else {
             container(icons::icon(
@@ -274,7 +280,7 @@ pub fn view<'a>(
         container(Space::new().width(dynamic_pill_width).height(pill_h)).style({
             let tokens = *tokens;
             let dock_cfg = config.dock.clone();
-            move |_| dock_pill_surface(&tokens, &dock_cfg)
+            move |_| dock_pill_surface(&tokens, &dock_cfg, reveal)
         }),
     )
     .width(Length::Fill)
@@ -294,7 +300,9 @@ pub fn view<'a>(
             left: h_pad,
         });
 
-    let tooltip_overlay: Element<'a, Message> = if let Some(idx) = hovered_idx
+    let tooltip_overlay: Element<'a, Message> = if !hide_tooltip
+        && tip_op > 0.01
+        && let Some(idx) = hovered_idx
         && let Some(item) = items.get(idx)
     {
         let label = if item.windows.len() > 1 {
@@ -307,7 +315,7 @@ pub fn view<'a>(
                 .padding([4, 10])
                 .style({
                     let tokens = *tokens;
-                    move |_| tooltip_style(&tokens)
+                    move |_| tooltip_style(&tokens, tip_op)
                 }),
         )
         .width(Length::Fill)
@@ -315,7 +323,7 @@ pub fn view<'a>(
         .center_x(Length::Fill)
         .align_y(iced::alignment::Vertical::Top)
         .padding(Padding {
-            top: 2.0,
+            top: 2.0 + (1.0 - tip_op) * 4.0,
             ..Padding::ZERO
         })
         .into()
@@ -324,12 +332,20 @@ pub fn view<'a>(
     };
 
     let dock_stack = stack![pill_backdrop, foreground_icons, tooltip_overlay];
+    let slide_y = (1.0 - reveal) * (pill_h + bottom_gap) * 0.55;
 
-    container(column![dock_stack, Space::new().height(bottom_gap)].align_x(Alignment::Center))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x(Length::Fill)
-        .align_y(iced::alignment::Vertical::Bottom)
-        .style(|_| transparent_container())
-        .into()
+    container(
+        column![dock_stack, Space::new().height((bottom_gap - slide_y).max(0.0))]
+            .align_x(Alignment::Center),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .center_x(Length::Fill)
+    .align_y(iced::alignment::Vertical::Top)
+    .padding(Padding {
+        top: slide_y,
+        ..Padding::ZERO
+    })
+    .style(|_| transparent_container())
+    .into()
 }

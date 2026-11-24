@@ -1000,20 +1000,27 @@ impl TrayTracker {
                 let uia: Option<IUIAutomation> =
                     unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }.ok();
 
-                let mut last_snapshot = enumerate_tray_icons_with_uia(uia.as_ref());
+                // Background polls stick to classic ToolbarWindow32 (`ReadProcessMemory`) so we never
+                // wake Explorer's XAML/Windhawk VisualTreeWatcher on hidden `Shell_TrayWnd`.
+                let mut last_snapshot =
+                    deduplicate_tray_items(enumerate_classic_tray_icons(), Vec::new());
                 if tx.send(last_snapshot.clone()).is_err() {
                     drop(uia);
                     return;
                 }
 
-                let timer_id = unsafe { SetTimer(None, 0, 1500, None) };
+                let timer_id = unsafe { SetTimer(None, 0, 2500, None) };
                 if !stop_thread.load(Ordering::Acquire) {
                     let mut msg = MSG::default();
                     while !stop_thread.load(Ordering::Acquire)
                         && unsafe { GetMessageW(&mut msg, None, 0, 0) }.0 > 0
                     {
-                        if msg.message == WM_TIMER || msg.message == WM_TRAY_REFRESH {
-                            let next = enumerate_tray_icons_with_uia(uia.as_ref());
+                        if msg.message == WM_TRAY_REFRESH || msg.message == WM_TIMER {
+                            let next = if msg.message == WM_TRAY_REFRESH {
+                                enumerate_tray_icons_with_uia(uia.as_ref())
+                            } else {
+                                deduplicate_tray_items(enumerate_classic_tray_icons(), Vec::new())
+                            };
                             if next != last_snapshot {
                                 last_snapshot = next.clone();
                                 if tx.send(next).is_err() {
@@ -1230,5 +1237,18 @@ mod tests {
         let lp = pack_v4_lparam(WM_CONTEXTMENU, 7) as usize;
         assert_eq!((lp & 0xFFFF) as u32, WM_CONTEXTMENU);
         assert_eq!(((lp >> 16) & 0xFFFF) as u32, 7);
+    }
+
+    #[test]
+    fn deduplicate_handles_classic_only_snapshots_cleanly() {
+        let classic = vec![
+            sample_icon("win32:100:1", "Tailscale · Connected", 0x100, 1),
+            sample_icon("win32:100:1", "Tailscale · Connected", 0x100, 1),
+            sample_icon("win32:200:2", "Docker Desktop", 0x200, 2),
+        ];
+        let deduped = deduplicate_tray_items(classic, Vec::new());
+        assert_eq!(deduped.len(), 2);
+        assert_eq!(deduped[0].owner_hwnd, 0x100);
+        assert_eq!(deduped[1].owner_hwnd, 0x200);
     }
 }

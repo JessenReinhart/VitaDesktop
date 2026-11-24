@@ -6,8 +6,8 @@ use std::time::Instant;
 use vita_core::{
     AccentPreset, ActiveAppMenu, AppCategory, DecoratedWindowState, DecoratorButtonStyle,
     DockBackgroundStyle, DockVisibility, GlobalMenuAction, InstalledApp, LauncherViewMode,
-    MonitorInfo, RgbaIcon, RunningWindow, ShellConfig, ShellPreset, SpaceInfo, SurfaceMaterial,
-    SystemSummary, ThemeMode, TopBarStyle,
+    MonitorInfo, RgbaColor, RgbaIcon, RunningWindow, ShellConfig, ShellPreset, SpaceInfo,
+    SurfaceMaterial, SystemSummary, ThemeMode, TopBarStyle,
 };
 use vita_win32::{HotkeyEvent, SystemNotification, TrayIconInfo};
 
@@ -29,6 +29,10 @@ pub enum Message {
     TrayIconsUpdated(Vec<TrayIconInfo>),
     SystemNotificationsUpdated(Vec<SystemNotification>),
     DockFallbackThumbCaptured(isize, Option<RgbaIcon>),
+    MaximizedWindowColorsSampled {
+        samples: Vec<(usize, isize, Option<RgbaColor>)>,
+        allow_fallback: bool,
+    },
     ConfigReloaded(ShellConfig),
     Hotkey(HotkeyEvent),
 

@@ -8,9 +8,10 @@ use crate::surfaces::window_decorator;
 use chrono::{DateTime, Local};
 use iced::border::Radius;
 use iced::widget::{Space, button, container, row, space, stack, text};
-use iced::{Alignment, Background, Border, Element, Length, Padding};
+use iced::{Alignment, Background, Border, Element, Length, Padding, Shadow};
 use vita_core::{
-    ActiveAppMenu, DecoratedWindowState, ShellConfig, SystemSummary, ThemeTokens, TopBarStyle,
+    ActiveAppMenu, DecoratedWindowState, RgbaColor, ShellConfig, SystemSummary, ThemeTokens,
+    TopBarStyle,
 };
 
 pub struct TopBarState<'a> {
@@ -28,7 +29,9 @@ pub struct TopBarState<'a> {
     pub active_menu: Option<&'a ActiveAppMenu>,
     pub open_global_menu: Option<(usize, usize)>,
     pub maximized_window: Option<&'a DecoratedWindowState>,
-    pub has_maximized_window: bool,
+    pub backdrop_color: Option<RgbaColor>,
+    pub backdrop_opacity: f32,
+    pub pantheon_solid_progress: f32,
 }
 
 fn truncate(s: &str, max_chars: usize) -> String {
@@ -207,9 +210,11 @@ fn view_pantheon_full_width<'a>(state: &TopBarState<'a>) -> Element<'a, Message>
         .width(Length::Fill)
         .height(Length::Fill);
 
-    let solid_max = config.decorator.enabled
-        && config.decorator.hide_maximized_titlebar
-        && state.has_maximized_window;
+    let solid_progress = if config.decorator.enabled && config.decorator.hide_maximized_titlebar {
+        state.pantheon_solid_progress.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
 
     container(bar_row)
         .width(Length::Fill)
@@ -219,10 +224,10 @@ fn view_pantheon_full_width<'a>(state: &TopBarState<'a>) -> Element<'a, Message>
             let tokens = *tokens;
             move |_| {
                 let mut s = full_width_topbar_style(&tokens);
-                if solid_max {
-                    s.background = Some(Background::Color(color(
-                        tokens.surface_topbar.with_alpha(1.0),
-                    )));
+                if solid_progress > 0.001 {
+                    let base_a = tokens.surface_topbar.a;
+                    let a = base_a + (1.0 - base_a) * solid_progress;
+                    s.background = Some(Background::Color(color(tokens.surface_topbar.with_alpha(a))));
                 }
                 s
             }
@@ -426,9 +431,16 @@ fn view_horizon_floating_pills<'a>(state: &TopBarState<'a>) -> Element<'a, Messa
 
     right_row = right_row.push(power_pill);
 
-    let has_max_win = config.decorator.enabled
-        && config.decorator.hide_maximized_titlebar
-        && state.has_maximized_window;
+    let backdrop_progress = if config.decorator.enabled && config.decorator.hide_maximized_titlebar
+    {
+        state.backdrop_opacity.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let bar_h = config.top_bar.height as f32;
+    let centered_top = ((bar_h - 34.0) * 0.5).max(0.0);
+    let floating_top = 8.0_f32.min((bar_h - 34.0).max(0.0));
+    let top_pad = floating_top + (centered_top - floating_top) * backdrop_progress;
 
     let content = row![
         row![brand_pill, secondary_left_pill]
@@ -440,37 +452,31 @@ fn view_horizon_floating_pills<'a>(state: &TopBarState<'a>) -> Element<'a, Messa
     .align_y(Alignment::Center)
     .width(Length::Fill);
 
+    let backdrop_color = (config.decorator.enabled && config.decorator.hide_maximized_titlebar)
+        .then_some(state.backdrop_color)
+        .flatten();
+
     container(content)
         .width(Length::Fill)
         .height(Length::Fill)
-        .padding(if has_max_win {
-            Padding {
-                top: 0.0,
-                right: 14.0,
-                bottom: 0.0,
-                left: 14.0,
-            }
-        } else {
-            Padding {
-                top: 8.0,
-                right: 14.0,
-                bottom: 0.0,
-                left: 14.0,
-            }
+        .padding(Padding {
+            top: top_pad,
+            right: 14.0,
+            bottom: 0.0,
+            left: 14.0,
         })
-        .align_y(if has_max_win {
-            iced::alignment::Vertical::Center
-        } else {
-            iced::alignment::Vertical::Top
-        })
+        .align_y(iced::alignment::Vertical::Top)
         .style({
             let tokens = *tokens;
             move |_| {
-                if has_max_win {
-                    let mut s = full_width_topbar_style(&tokens);
-                    s.background =
-                        Some(Background::Color(color(tokens.surface_base.with_alpha(1.0))));
-                    s
+                if let Some(bg) = backdrop_color {
+                    container::Style {
+                        background: Some(Background::Color(color(bg))),
+                        text_color: Some(color(tokens.text_primary)),
+                        border: Border::default(),
+                        shadow: Shadow::default(),
+                        snap: true,
+                    }
                 } else {
                     transparent_container()
                 }
@@ -629,4 +635,55 @@ fn exit_button<'a>(tokens: &'a ThemeTokens) -> Element<'a, Message> {
         .style(subtle_pill_button(tokens, false, tokens.pill))
         .on_press(Message::ExitRequested)
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vita_core::ShellPreset;
+
+    #[test]
+    fn horizon_floating_pills_view_builds_with_and_without_matched_maximized_bg() {
+        for (preset, matched, opacity) in [
+            (ShellPreset::HorizonLight, Some(RgbaColor::from_hex("#1F2330")), 1.0),
+            (
+                ShellPreset::HorizonLight,
+                Some(RgbaColor::from_hex("#1F2330").with_alpha(0.5)),
+                0.5,
+            ),
+            (ShellPreset::HorizonLight, None, 0.0),
+            (ShellPreset::HorizonDark, Some(RgbaColor::from_hex("#F3F4F6")), 1.0),
+        ] {
+            let mut config = ShellConfig::default();
+            config.apply_preset(preset);
+            let tokens = ThemeTokens::resolve(
+                config.theme_mode,
+                preset == ShellPreset::HorizonDark,
+                config.accent,
+                config.surface_material,
+                config.accessibility.increase_contrast,
+            );
+            let summary = SystemSummary::default();
+
+            let _el = view(TopBarState {
+                config: &config,
+                tokens: &tokens,
+                summary: &summary,
+                now: Local::now(),
+                monitor_idx: 0,
+                focus_mode: false,
+                quick_controls_open: false,
+                notifications_open: false,
+                tray_open: false,
+                calendar_open: false,
+                has_unread_notifs: false,
+                active_menu: None,
+                open_global_menu: None,
+                maximized_window: None,
+                backdrop_color: matched,
+                backdrop_opacity: opacity,
+                pantheon_solid_progress: opacity,
+            });
+        }
+    }
 }

@@ -1,4 +1,5 @@
 use crate::monitors::monitor_index_for_rect;
+use crate::thumbnails::{BitmapGuard, MemDcGuard, ScreenDcGuard, SelectedObjectGuard};
 use crate::windows::{cached_window_icon, process_exe_info};
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -16,19 +17,22 @@ use windows::Win32::Graphics::Dwm::{
     DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE,
     DWMWCP_ROUND, DwmGetWindowAttribute, DwmSetWindowAttribute,
 };
-use windows::Win32::Graphics::Gdi::{CLR_INVALID, ClientToScreen, GetDC, GetPixel, ReleaseDC};
+use windows::Win32::Graphics::Gdi::{
+    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BitBlt, CLR_INVALID, ClientToScreen, CreateCompatibleDC,
+    CreateDIBSection, DIB_RGB_COLORS, GetDC, GetDIBits, GetPixel, ReleaseDC, SRCCOPY, SelectObject,
+};
 use windows::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, GW_OWNER, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetForegroundWindow,
-    GetMessageW, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW,
-    GetWindowTextW, GetWindowThreadProcessId, HWND_NOTOPMOST, HWND_TOPMOST, IsIconic, IsWindow,
-    IsWindowVisible, IsZoomed, KillTimer, MSG, PM_NOREMOVE, PeekMessageW, PostMessageW,
-    PostThreadMessageW, SC_MOVE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow, TranslateMessage, WM_QUIT,
-    WM_SYSCOMMAND, WM_TIMER, WM_USER, WS_CAPTION, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_THICKFRAME,
+    DispatchMessageW, GA_ROOT, GW_OWNER, GWL_EXSTYLE, GWL_STYLE, GetAncestor, GetClassNameW,
+    GetForegroundWindow, GetMessageW, GetWindow, GetWindowLongPtrW, GetWindowRect,
+    GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, HWND_NOTOPMOST, HWND_TOPMOST,
+    IsChild, IsIconic, IsWindow, IsWindowVisible, IsZoomed, KillTimer, MSG, PM_NOREMOVE,
+    PeekMessageW, PostMessageW, PostThreadMessageW, SC_MOVE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow, SetTimer, SetWindowPos,
+    ShowWindow, TranslateMessage, WM_QUIT, WM_SYSCOMMAND, WM_TIMER, WM_USER, WS_CAPTION,
+    WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_THICKFRAME, WindowFromPoint,
 };
 
 const EVENT_SYSTEM_FOREGROUND: u32 = 0x0003;
@@ -235,6 +239,219 @@ fn sample_titlebar_bg(frame_rect: PhysicalRect, dpi_scale: f32) -> Option<RgbaCo
     let g = (((raw >> 8) & 0xFF) & !1) as f32 / 255.0;
     let b = (((raw >> 16) & 0xFF) & !1) as f32 / 255.0;
     Some(RgbaColor::rgba(r, g, b, 1.0))
+}
+
+/// Computes the dominant RGB color from `[B, G, R, A]` pixel samples using 8-step color buckets.
+pub fn dominant_bgra_color(bgra_samples: &[[u8; 4]]) -> Option<RgbaColor> {
+    if bgra_samples.is_empty() {
+        return None;
+    }
+
+    let mut buckets: Vec<([u8; 3], u32, u32, u32, u32)> = Vec::with_capacity(16);
+    for &[b, g, r, _a] in bgra_samples {
+        let key = [r >> 3, g >> 3, b >> 3];
+        if let Some(entry) = buckets.iter_mut().find(|item| item.0 == key) {
+            entry.1 += 1;
+            entry.2 += u32::from(r);
+            entry.3 += u32::from(g);
+            entry.4 += u32::from(b);
+        } else {
+            buckets.push((key, 1, u32::from(r), u32::from(g), u32::from(b)));
+        }
+    }
+
+    let (_, count, sum_r, sum_g, sum_b) = buckets
+        .into_iter()
+        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))?;
+
+    let avg_r = (sum_r + count / 2) / count;
+    let avg_g = (sum_g + count / 2) / count;
+    let avg_b = (sum_b + count / 2) / count;
+
+    let snap = |v: u32| -> u8 {
+        if v >= 254 {
+            255
+        } else {
+            (v.min(255) as u8) & !1
+        }
+    };
+
+    Some(RgbaColor::rgba(
+        f32::from(snap(avg_r)) / 255.0,
+        f32::from(snap(avg_g)) / 255.0,
+        f32::from(snap(avg_b)) / 255.0,
+        1.0,
+    ))
+}
+
+/// Samples the dominant background color along a thin horizontal strip just below Vita's Top Bar
+/// on `monitor` when belonging to `hwnd_raw`, avoiding occlusion and Vita's own surfaces.
+pub fn sample_maximized_window_bg(
+    hwnd_raw: isize,
+    monitor: &MonitorInfo,
+    top_bar_height_logical: u32,
+) -> Option<RgbaColor> {
+    if hwnd_raw == 0 {
+        return None;
+    }
+    let hwnd = HWND(hwnd_raw as *mut c_void);
+    if !unsafe { IsWindow(Some(hwnd)) }.as_bool()
+        || !unsafe { IsWindowVisible(hwnd) }.as_bool()
+        || unsafe { IsIconic(hwnd) }.as_bool()
+    {
+        return None;
+    }
+
+    let dpi = monitor.dpi_scale.max(1.0);
+    let b = monitor.physical_bounds;
+    let top_bar_px = (top_bar_height_logical as f32 * dpi).round() as i32;
+    let margin_x = (b.width / 14).clamp(16, 160);
+    let strip_x = b.x + margin_x;
+    let strip_w = b.width - margin_x * 2;
+    if strip_w < 32 {
+        return None;
+    }
+    let strip_y = b.y + top_bar_px + (1.0 * dpi).round() as i32;
+    let strip_h = (6.0 * dpi).round().clamp(4.0, 12.0) as i32;
+    if strip_y + strip_h >= b.bottom() {
+        return None;
+    }
+
+    const COLS: usize = 32;
+    let own_pid = unsafe { GetCurrentProcessId() };
+    let mut exact_cols = Vec::with_capacity(COLS);
+    let mut non_own_cols = Vec::with_capacity(COLS);
+    let probe_y = strip_y + strip_h / 2;
+    for c in 0..COLS {
+        let dx = ((strip_w - 1) as usize * c / (COLS - 1)) as i32;
+        let hit = unsafe {
+            WindowFromPoint(POINT {
+                x: strip_x + dx,
+                y: probe_y,
+            })
+        };
+        if hit.0.is_null() {
+            continue;
+        }
+        let root = unsafe { GetAncestor(hit, GA_ROOT) };
+        let root_hwnd = if root.0.is_null() { hit } else { root };
+        if root_hwnd == hwnd || hit == hwnd || unsafe { IsChild(hwnd, hit) }.as_bool() {
+            exact_cols.push(dx);
+        }
+        let mut root_pid = 0u32;
+        unsafe {
+            GetWindowThreadProcessId(root_hwnd, Some(&mut root_pid));
+        }
+        if root_pid != 0 && root_pid != own_pid {
+            non_own_cols.push(dx);
+        }
+    }
+
+    let fg = unsafe { GetForegroundWindow() };
+    let active_cols = if exact_cols.len() >= 4 {
+        exact_cols
+    } else if fg == hwnd && non_own_cols.len() >= 4 {
+        non_own_cols
+    } else {
+        return None;
+    };
+
+    let screen_dc = ScreenDcGuard(unsafe { GetDC(None) });
+    if screen_dc.0.is_invalid() {
+        return None;
+    }
+    let mem_dc = MemDcGuard(unsafe { CreateCompatibleDC(Some(screen_dc.0)) });
+    if mem_dc.0.is_invalid() {
+        return None;
+    }
+
+    let mut bmi = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: strip_w,
+            biHeight: -strip_h,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut bits_ptr: *mut c_void = std::ptr::null_mut();
+    let hbm = unsafe {
+        CreateDIBSection(
+            Some(screen_dc.0),
+            &bmi,
+            DIB_RGB_COLORS,
+            &mut bits_ptr,
+            None,
+            0,
+        )
+    }
+    .ok()?;
+    let bitmap = BitmapGuard(hbm);
+    if bitmap.0.is_invalid() || bits_ptr.is_null() {
+        return None;
+    }
+
+    let prev_obj = unsafe { SelectObject(mem_dc.0, bitmap.0.into()) };
+    if prev_obj.is_invalid() {
+        return None;
+    }
+    let selected = SelectedObjectGuard {
+        hdc: mem_dc.0,
+        prev: prev_obj,
+    };
+
+    if unsafe {
+        BitBlt(
+            mem_dc.0,
+            0,
+            0,
+            strip_w,
+            strip_h,
+            Some(screen_dc.0),
+            strip_x,
+            strip_y,
+            SRCCOPY,
+        )
+    }
+    .is_err()
+    {
+        return None;
+    }
+    drop(selected);
+
+    let pixel_bytes = (strip_w as usize) * (strip_h as usize) * 4;
+    let mut pixels = vec![0u8; pixel_bytes];
+    let lines = unsafe {
+        GetDIBits(
+            screen_dc.0,
+            bitmap.0,
+            0,
+            strip_h as u32,
+            Some(pixels.as_mut_ptr().cast()),
+            &mut bmi,
+            DIB_RGB_COLORS,
+        )
+    };
+    if lines <= 0 {
+        return None;
+    }
+
+    let sample_rows = [0, strip_h / 2, strip_h - 1];
+    let mut samples = Vec::with_capacity(active_cols.len() * sample_rows.len());
+    for y in sample_rows {
+        for &dx in &active_cols {
+            let idx = ((y as usize) * (strip_w as usize) + (dx as usize)) * 4;
+            if idx + 3 < pixels.len() {
+                samples.push([pixels[idx], pixels[idx + 1], pixels[idx + 2], 255]);
+            }
+        }
+    }
+
+    dominant_bgra_color(&samples)
 }
 
 pub fn minimize_window(hwnd_raw: isize) {
@@ -638,5 +855,59 @@ impl Drop for DecoratorTracker {
         if let Some(handle) = self.thread.take() {
             let _ = handle.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dominant_bgra_color_picks_background_over_text_and_accents() {
+        let mut samples = vec![[0x30, 0x22, 0x1E, 255]; 20];
+        samples.extend(vec![[0x31, 0x23, 0x1F, 255]; 8]);
+        // Sparse bright text and accent pixels must not pull the dominant background away.
+        samples.extend(vec![[0xFA, 0xFA, 0xFA, 255]; 4]);
+        samples.extend(vec![[0x56, 0x78, 0xD8, 255]; 3]);
+
+        let c = dominant_bgra_color(&samples).expect("dominant color");
+        assert_eq!(c.r, 30.0 / 255.0);
+        assert_eq!(c.g, 34.0 / 255.0);
+        assert_eq!(c.b, 48.0 / 255.0);
+        assert_eq!(c.a, 1.0);
+    }
+
+    #[test]
+    fn dominant_bgra_color_preserves_pure_white_and_black_and_handles_empty() {
+        assert_eq!(dominant_bgra_color(&[]), None);
+
+        let white = dominant_bgra_color(&[[255, 255, 255, 255]; 6]).unwrap();
+        assert_eq!(white, RgbaColor::rgba(1.0, 1.0, 1.0, 1.0));
+
+        let black = dominant_bgra_color(&[[0, 0, 0, 255]; 6]).unwrap();
+        assert_eq!(black, RgbaColor::rgba(0.0, 0.0, 0.0, 1.0));
+    }
+
+    #[test]
+    fn sample_maximized_window_bg_invalid_hwnd_returns_none() {
+        let mon = MonitorInfo {
+            name: "DISPLAY1".to_string(),
+            is_primary: true,
+            physical_bounds: PhysicalRect {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+            },
+            physical_workarea: PhysicalRect {
+                x: 0,
+                y: 46,
+                width: 1920,
+                height: 1034,
+            },
+            dpi_scale: 1.0,
+        };
+        assert_eq!(sample_maximized_window_bg(0, &mon, 46), None);
+        assert_eq!(sample_maximized_window_bg(-1, &mon, 46), None);
     }
 }

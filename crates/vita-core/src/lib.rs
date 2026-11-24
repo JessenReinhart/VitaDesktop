@@ -21,5 +21,5 @@ pub use models::{
     WindowMenuAction, merge_dock_items,
 };
 pub use search::{classify_app_category, filter_and_sort_apps, fuzzy_score};
-pub use spring::{DockMagnifier, Spring};
+pub use spring::{BackdropTransition, DockMagnifier, Spring};
 pub use theme::{AccentPreset, RgbaColor, ShellPreset, SurfaceMaterial, ThemeMode, ThemeTokens};

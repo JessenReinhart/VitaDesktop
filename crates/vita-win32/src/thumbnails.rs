@@ -54,19 +54,30 @@ pub fn fit_aspect_rect(src_w: i32, src_h: i32, slot: PhysicalRect) -> PhysicalRe
 struct ThumbnailSlotEntry {
     handle: isize,
     last_dest: PhysicalRect,
+    last_opacity: u8,
 }
 
 /// Manages live Win32 DWM thumbnail registrations (`HTHUMBNAIL` = `isize` in `windows 0.62`)
 /// bound to a destination shell popover HWND.
-#[derive(Default)]
 pub struct DwmThumbnailHost {
     dest_hwnd: u64,
     thumbnails: HashMap<isize, ThumbnailSlotEntry>,
+    opacity: u8,
+}
+
+impl Default for DwmThumbnailHost {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DwmThumbnailHost {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            dest_hwnd: 0,
+            thumbnails: HashMap::new(),
+            opacity: 255,
+        }
     }
 
     /// Reconciles active DWM thumbnails for `dest_hwnd` against `slots`, registering new source
@@ -123,45 +134,46 @@ impl DwmThumbnailHost {
             }
             let src = HWND(src_hwnd as *mut c_void);
 
-            let (handle, prev_rect) = if let Some(&entry) = self.thumbnails.get(&src_hwnd) {
-                (entry.handle, Some(entry.last_dest))
-            } else {
-                let Ok(handle) = (unsafe { DwmRegisterThumbnail(dest, src) }) else {
-                    continue;
+            let (handle, prev_rect, prev_opacity) =
+                if let Some(&entry) = self.thumbnails.get(&src_hwnd) {
+                    (entry.handle, Some(entry.last_dest), Some(entry.last_opacity))
+                } else {
+                    let Ok(handle) = (unsafe { DwmRegisterThumbnail(dest, src) }) else {
+                        continue;
+                    };
+                    (handle, None, None)
                 };
-                (handle, None)
-            };
 
-            let (handle, prev_rect, src_size) = match unsafe { DwmQueryThumbnailSourceSize(handle) }
-            {
-                Ok(sz) => (handle, prev_rect, sz),
-                Err(_) if prev_rect.is_some() => {
-                    unsafe {
-                        let _ = DwmUnregisterThumbnail(handle);
-                    }
-                    self.thumbnails.remove(&src_hwnd);
-                    let Ok(new_handle) = (unsafe { DwmRegisterThumbnail(dest, src) }) else {
-                        continue;
-                    };
-                    let Ok(sz) = (unsafe { DwmQueryThumbnailSourceSize(new_handle) }) else {
+            let (handle, prev_rect, prev_opacity, src_size) =
+                match unsafe { DwmQueryThumbnailSourceSize(handle) } {
+                    Ok(sz) => (handle, prev_rect, prev_opacity, sz),
+                    Err(_) if prev_rect.is_some() => {
                         unsafe {
-                            let _ = DwmUnregisterThumbnail(new_handle);
+                            let _ = DwmUnregisterThumbnail(handle);
                         }
-                        continue;
-                    };
-                    (new_handle, None, sz)
-                }
-                Err(_) => {
-                    unsafe {
-                        let _ = DwmUnregisterThumbnail(handle);
+                        self.thumbnails.remove(&src_hwnd);
+                        let Ok(new_handle) = (unsafe { DwmRegisterThumbnail(dest, src) }) else {
+                            continue;
+                        };
+                        let Ok(sz) = (unsafe { DwmQueryThumbnailSourceSize(new_handle) }) else {
+                            unsafe {
+                                let _ = DwmUnregisterThumbnail(new_handle);
+                            }
+                            continue;
+                        };
+                        (new_handle, None, None, sz)
                     }
-                    self.thumbnails.remove(&src_hwnd);
-                    continue;
-                }
-            };
+                    Err(_) => {
+                        unsafe {
+                            let _ = DwmUnregisterThumbnail(handle);
+                        }
+                        self.thumbnails.remove(&src_hwnd);
+                        continue;
+                    }
+                };
 
             let fitted = fit_aspect_rect(src_size.cx, src_size.cy, slot_rect);
-            if prev_rect == Some(fitted) {
+            if prev_rect == Some(fitted) && prev_opacity == Some(self.opacity) {
                 continue;
             }
 
@@ -177,7 +189,7 @@ impl DwmThumbnailHost {
                     bottom: fitted.bottom(),
                 },
                 rcSource: RECT::default(),
-                opacity: 255,
+                opacity: self.opacity,
                 fVisible: TRUE,
                 fSourceClientAreaOnly: FALSE,
             };
@@ -195,8 +207,27 @@ impl DwmThumbnailHost {
                 ThumbnailSlotEntry {
                     handle,
                     last_dest: fitted,
+                    last_opacity: self.opacity,
                 },
             );
+        }
+    }
+
+    /// Updates DWM composition opacity (`0..=255`) for all registered thumbnails.
+    pub fn set_opacity(&mut self, opacity: u8) {
+        if self.opacity == opacity {
+            return;
+        }
+        self.opacity = opacity;
+        for entry in self.thumbnails.values_mut() {
+            let props = DWM_THUMBNAIL_PROPERTIES {
+                dwFlags: DWM_TNP_OPACITY,
+                opacity,
+                ..Default::default()
+            };
+            if unsafe { DwmUpdateThumbnailProperties(entry.handle, &props) }.is_ok() {
+                entry.last_opacity = opacity;
+            }
         }
     }
 
@@ -217,7 +248,7 @@ impl Drop for DwmThumbnailHost {
     }
 }
 
-struct ScreenDcGuard(HDC);
+pub(crate) struct ScreenDcGuard(pub(crate) HDC);
 
 impl Drop for ScreenDcGuard {
     fn drop(&mut self) {
@@ -229,7 +260,7 @@ impl Drop for ScreenDcGuard {
     }
 }
 
-struct MemDcGuard(HDC);
+pub(crate) struct MemDcGuard(pub(crate) HDC);
 
 impl Drop for MemDcGuard {
     fn drop(&mut self) {
@@ -241,7 +272,7 @@ impl Drop for MemDcGuard {
     }
 }
 
-struct BitmapGuard(HBITMAP);
+pub(crate) struct BitmapGuard(pub(crate) HBITMAP);
 
 impl Drop for BitmapGuard {
     fn drop(&mut self) {
@@ -253,9 +284,9 @@ impl Drop for BitmapGuard {
     }
 }
 
-struct SelectedObjectGuard {
-    hdc: HDC,
-    prev: HGDIOBJ,
+pub(crate) struct SelectedObjectGuard {
+    pub(crate) hdc: HDC,
+    pub(crate) prev: HGDIOBJ,
 }
 
 impl Drop for SelectedObjectGuard {
@@ -546,5 +577,16 @@ mod tests {
         assert_eq!(capture_window_thumbnail(-1, 188, 112), None);
         assert_eq!(capture_window_thumbnail(0x1234_5678, 0, 112), None);
         assert_eq!(capture_window_thumbnail(0x1234_5678, 188, 0), None);
+    }
+
+    #[test]
+    fn dwm_thumbnail_host_default_opacity_is_opaque_and_updates_safely() {
+        let mut host = DwmThumbnailHost::new();
+        assert_eq!(host.opacity, 255);
+        assert_eq!(DwmThumbnailHost::default().opacity, 255);
+        host.set_opacity(128);
+        assert_eq!(host.opacity, 128);
+        host.set_opacity(255);
+        assert_eq!(host.opacity, 255);
     }
 }

@@ -43,6 +43,29 @@ impl RgbaColor {
         }
     }
 
+    pub fn scale_alpha(self, factor: f32) -> Self {
+        Self {
+            a: (self.a * factor.clamp(0.0, 1.0)).clamp(0.0, 1.0),
+            ..self
+        }
+    }
+
+    pub fn lerp(self, other: Self, t: f32) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        if t <= 0.0 {
+            return self;
+        }
+        if t >= 1.0 {
+            return other;
+        }
+        Self {
+            r: self.r + (other.r - self.r) * t,
+            g: self.g + (other.g - self.g) * t,
+            b: self.b + (other.b - self.b) * t,
+            a: self.a + (other.a - self.a) * t,
+        }
+    }
+
     /// WCAG 2.2 relative luminance calculation.
     pub fn relative_luminance(self) -> f32 {
         fn linearize(c: f32) -> f32 {
@@ -405,6 +428,84 @@ impl ThemeTokens {
             s24: 24.0,
         }
     }
+
+    /// Interpolates smoothly between `self` and `other` for `t` in `0.0..=1.0`.
+    pub fn lerp(&self, other: &Self, t: f32) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        if t <= 0.0 {
+            return *self;
+        }
+        if t >= 1.0 {
+            return *other;
+        }
+        Self {
+            is_dark: if t >= 0.5 { other.is_dark } else { self.is_dark },
+            material: if t >= 0.5 { other.material } else { self.material },
+            high_contrast: if t >= 0.5 {
+                other.high_contrast
+            } else {
+                self.high_contrast
+            },
+            surface_base: self.surface_base.lerp(other.surface_base, t),
+            surface_elevated: self.surface_elevated.lerp(other.surface_elevated, t),
+            surface_subtle: self.surface_subtle.lerp(other.surface_subtle, t),
+            surface_topbar: self.surface_topbar.lerp(other.surface_topbar, t),
+            surface_dock: self.surface_dock.lerp(other.surface_dock, t),
+            surface_tooltip: self.surface_tooltip.lerp(other.surface_tooltip, t),
+            border_control: self.border_control.lerp(other.border_control, t),
+            border_subtle: self.border_subtle.lerp(other.border_subtle, t),
+            border_focus: self.border_focus.lerp(other.border_focus, t),
+            divider: self.divider.lerp(other.divider, t),
+            text_primary: self.text_primary.lerp(other.text_primary, t),
+            text_secondary: self.text_secondary.lerp(other.text_secondary, t),
+            text_muted: self.text_muted.lerp(other.text_muted, t),
+            text_on_accent: self.text_on_accent.lerp(other.text_on_accent, t),
+            accent_primary: self.accent_primary.lerp(other.accent_primary, t),
+            accent_warm: self.accent_warm.lerp(other.accent_warm, t),
+            accent_soft: self.accent_soft.lerp(other.accent_soft, t),
+            dock_dot_focused: self.dock_dot_focused.lerp(other.dock_dot_focused, t),
+            dock_dot_running: self.dock_dot_running.lerp(other.dock_dot_running, t),
+            status_error: self.status_error.lerp(other.status_error, t),
+            status_caution: self.status_caution.lerp(other.status_caution, t),
+            status_success: self.status_success.lerp(other.status_success, t),
+            shadow_color: self.shadow_color.lerp(other.shadow_color, t),
+            ..*self
+        }
+    }
+
+    /// Scales alpha across all semantic surface, border, ink, accent, and shadow colors.
+    pub fn with_opacity(self, factor: f32) -> Self {
+        let f = factor.clamp(0.0, 1.0);
+        if (f - 1.0).abs() < 0.001 {
+            return self;
+        }
+        Self {
+            surface_base: self.surface_base.scale_alpha(f),
+            surface_elevated: self.surface_elevated.scale_alpha(f),
+            surface_subtle: self.surface_subtle.scale_alpha(f),
+            surface_topbar: self.surface_topbar.scale_alpha(f),
+            surface_dock: self.surface_dock.scale_alpha(f),
+            surface_tooltip: self.surface_tooltip.scale_alpha(f),
+            border_control: self.border_control.scale_alpha(f),
+            border_subtle: self.border_subtle.scale_alpha(f),
+            border_focus: self.border_focus.scale_alpha(f),
+            divider: self.divider.scale_alpha(f),
+            text_primary: self.text_primary.scale_alpha(f),
+            text_secondary: self.text_secondary.scale_alpha(f),
+            text_muted: self.text_muted.scale_alpha(f),
+            text_on_accent: self.text_on_accent.scale_alpha(f),
+            accent_primary: self.accent_primary.scale_alpha(f),
+            accent_warm: self.accent_warm.scale_alpha(f),
+            accent_soft: self.accent_soft.scale_alpha(f),
+            dock_dot_focused: self.dock_dot_focused.scale_alpha(f),
+            dock_dot_running: self.dock_dot_running.scale_alpha(f),
+            status_error: self.status_error.scale_alpha(f),
+            status_caution: self.status_caution.scale_alpha(f),
+            status_success: self.status_success.scale_alpha(f),
+            shadow_color: self.shadow_color.scale_alpha(f),
+            ..self
+        }
+    }
 }
 
 #[cfg(test)]
@@ -459,5 +560,54 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn rgba_lerp_and_scale_alpha_clamp_cleanly() {
+        let a = RgbaColor::rgba(0.0, 0.5, 1.0, 0.8);
+        let b = RgbaColor::rgba(1.0, 1.0, 0.0, 0.2);
+
+        assert_eq!(a.lerp(b, -0.5), a);
+        assert_eq!(a.lerp(b, 1.5), b);
+        let mid = a.lerp(b, 0.5);
+        assert!((mid.r - 0.5).abs() < 1e-6);
+        assert!((mid.g - 0.75).abs() < 1e-6);
+        assert!((mid.b - 0.5).abs() < 1e-6);
+        assert!((mid.a - 0.5).abs() < 1e-6);
+
+        assert!((a.scale_alpha(0.5).a - 0.4).abs() < 1e-6);
+        assert_eq!(a.scale_alpha(-1.0).a, 0.0);
+        assert!((a.scale_alpha(2.0).a - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn theme_tokens_lerp_and_with_opacity_preserve_endpoints() {
+        let light = ThemeTokens::resolve(
+            ThemeMode::Light,
+            false,
+            AccentPreset::Terracotta,
+            SurfaceMaterial::Matte,
+            false,
+        );
+        let dark = ThemeTokens::resolve(
+            ThemeMode::Dark,
+            true,
+            AccentPreset::Lilac,
+            SurfaceMaterial::Frosted,
+            true,
+        );
+
+        assert_eq!(light.lerp(&dark, 0.0), light);
+        assert_eq!(light.lerp(&dark, 1.0), dark);
+
+        let mid = light.lerp(&dark, 0.5);
+        assert!(mid.is_dark);
+        assert_ne!(mid.surface_base, light.surface_base);
+        assert_ne!(mid.surface_base, dark.surface_base);
+
+        let half = dark.with_opacity(0.5);
+        assert!((half.surface_base.a - dark.surface_base.a * 0.5).abs() < 1e-6);
+        assert!((half.text_primary.a - 0.5).abs() < 1e-6);
+        assert_eq!(dark.with_opacity(1.0), dark);
     }
 }

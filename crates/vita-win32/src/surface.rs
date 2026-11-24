@@ -19,6 +19,7 @@ pub enum ShellWindowRole {
     TopBar { full_width: bool },
     Dock,
     Popover,
+    HoverPopover,
     DesktopWidget,
     Toast,
     Decorator,
@@ -44,6 +45,7 @@ pub fn configure_shell_window(
     let mut new_ex = match role {
         ShellWindowRole::TopBar { .. }
         | ShellWindowRole::Dock
+        | ShellWindowRole::HoverPopover
         | ShellWindowRole::DesktopWidget
         | ShellWindowRole::Toast
         | ShellWindowRole::Decorator => {
@@ -74,6 +76,7 @@ pub fn configure_shell_window(
         ShellWindowRole::TopBar { .. }
         | ShellWindowRole::Dock
         | ShellWindowRole::Popover
+        | ShellWindowRole::HoverPopover
         | ShellWindowRole::DesktopWidget
         | ShellWindowRole::Toast
         | ShellWindowRole::Decorator => DWMWCP_DONOTROUND,
