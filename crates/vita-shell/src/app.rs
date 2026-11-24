@@ -33,7 +33,8 @@ use vita_win32::{
     enumerate_spaces, enumerate_tray_icons, focus_or_toggle_window, launch_app_aumid,
     launch_target, lock_workstation, minimize_window, monitor_index_from_cursor,
     position_window_bottom, primary_monitor, primary_monitor_index, read_system_summary,
-    reposition_window_physical, resolve_aumid_icon, resolve_pinned_app_icon, restart_system,
+    refresh_tray_icons, reposition_window_physical, resolve_aumid_icon, resolve_pinned_app_icon,
+    restart_system,
     restore_all_taskbars, rgb_to_colorref, sample_maximized_window_bg, set_display_brightness,
     set_master_mute, set_master_volume, set_window_visible, shutdown_system, sleep_system,
     spawn_watchdog, switch_to_space, system_prefers_dark, toggle_maximize_window,
@@ -1699,9 +1700,12 @@ impl VitaShell {
             }
             Message::RefreshTrayIcons => Task::perform(
                 async move {
-                    tokio::task::spawn_blocking(enumerate_tray_icons)
-                        .await
-                        .unwrap_or_default()
+                    tokio::task::spawn_blocking(|| {
+                        refresh_tray_icons();
+                        enumerate_tray_icons()
+                    })
+                    .await
+                    .unwrap_or_default()
                 },
                 Message::TrayIconsUpdated,
             ),
@@ -3136,9 +3140,17 @@ impl VitaShell {
         if self.screenshot_dir.is_none() {
             batch.push(Task::perform(
                 async move {
-                    tokio::task::spawn_blocking(enumerate_tray_icons)
-                        .await
-                        .unwrap_or_default()
+                    tokio::task::spawn_blocking(|| {
+                        let list = enumerate_tray_icons();
+                        if list.is_empty() {
+                            refresh_tray_icons();
+                            enumerate_tray_icons()
+                        } else {
+                            list
+                        }
+                    })
+                    .await
+                    .unwrap_or_default()
                 },
                 Message::TrayIconsUpdated,
             ));
@@ -3183,12 +3195,16 @@ impl VitaShell {
         let close = self.close_tray_popover();
         let activate = Task::perform(
             async move {
-                let _ = tokio::task::spawn_blocking(move || {
+                tokio::task::spawn_blocking(move || {
+                    // Let close_tray_popover() hide and yield focus before the target app opens its menu.
+                    std::thread::sleep(Duration::from_millis(40));
                     activate_tray_icon(&info, kind, cursor);
+                    enumerate_tray_icons()
                 })
-                .await;
+                .await
+                .unwrap_or_default()
             },
-            |_| Message::RefreshTrayIcons,
+            Message::TrayIconsUpdated,
         );
         Task::batch([close, activate])
     }
@@ -4806,6 +4822,7 @@ impl VitaShell {
                 owner_hwnd: 0,
                 uid: 0,
                 callback_msg: 0,
+                callback_version: None,
                 uia_automation_id: None,
                 is_overflow,
                 icon: Some(icon),

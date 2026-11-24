@@ -3,16 +3,16 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-use windows::Win32::System::Threading::GetCurrentThreadId;
+use windows::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, EnumWindows, FindWindowW, GetClassNameW, GetMessageW,
+    DispatchMessageW, EnumWindows, GetClassNameW, GetMessageW, GetWindowThreadProcessId,
     IsWindow, IsWindowVisible, KillTimer, MSG, PM_NOREMOVE, PeekMessageW,
     PostThreadMessageW, SW_HIDE, SW_SHOW, SWP_ASYNCWINDOWPOS, SWP_FRAMECHANGED, SWP_HIDEWINDOW,
     SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SetTimer, SetWindowPos,
     ShowWindow, ShowWindowAsync, TranslateMessage, WM_QUIT, WM_TIMER, WM_USER,
 };
-use windows::core::{BOOL, w};
+use windows::core::BOOL;
 
 const EVENT_OBJECT_SHOW: u32 = 0x8002;
 const WINEVENT_OUTOFCONTEXT: u32 = 0x0000;
@@ -22,6 +22,14 @@ const OBJID_WINDOW: i32 = 0;
 static ENFORCE_HIDE: AtomicBool = AtomicBool::new(false);
 
 fn is_taskbar_class(hwnd: HWND) -> bool {
+    let mut pid: u32 = 0;
+    unsafe {
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    }
+    if pid == 0 || pid == unsafe { GetCurrentProcessId() } {
+        return false;
+    }
+
     let mut buf = [0u16; 64];
     let len = unsafe { GetClassNameW(hwnd, &mut buf) };
     if len <= 0 {
@@ -44,12 +52,7 @@ unsafe extern "system" fn collect_taskbars(hwnd: HWND, lparam: LPARAM) -> BOOL {
 
 /// Finds all primary (`Shell_TrayWnd`) and secondary (`Shell_SecondaryTrayWnd`) taskbar HWNDs.
 pub fn find_taskbar_hwnds() -> Vec<HWND> {
-    let mut raw = Vec::new();
-    if let Ok(primary) = unsafe { FindWindowW(w!("Shell_TrayWnd"), None) }
-        && !primary.0.is_null()
-    {
-        raw.push(primary.0 as isize);
-    }
+    let mut raw: Vec<isize> = Vec::new();
     let ptr = &mut raw as *mut Vec<isize> as isize;
     unsafe {
         let _ = EnumWindows(Some(collect_taskbars), LPARAM(ptr));
@@ -259,6 +262,22 @@ impl Drop for TaskbarGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::c_void;
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassExW, UnregisterClassW,
+        WINDOW_EX_STYLE, WNDCLASSEXW, WS_POPUP,
+    };
+    use windows::core::w;
+
+    unsafe extern "system" fn dummy_wnd_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> windows::Win32::Foundation::LRESULT {
+        unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+    }
 
     #[test]
     fn taskbar_lookup_never_panics() {
@@ -266,6 +285,51 @@ mod tests {
         for _ in 0..5 {
             let guard = TaskbarGuard::new(false);
             assert!(!guard.is_hidden());
+        }
+    }
+
+    #[test]
+    fn find_taskbar_hwnds_excludes_own_process_shell_tray_wnd() {
+        let _lock = crate::tray::SHELL_TRAY_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let hinst = unsafe { GetModuleHandleW(None) }.unwrap_or_default();
+        let class_name = w!("Shell_TrayWnd");
+        let wc = WNDCLASSEXW {
+            cbSize: size_of::<WNDCLASSEXW>() as u32,
+            lpfnWndProc: Some(dummy_wnd_proc),
+            hInstance: hinst.into(),
+            lpszClassName: class_name,
+            ..Default::default()
+        };
+        let atom = unsafe { RegisterClassExW(&wc) };
+        let own_hwnd = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                class_name,
+                w!(""),
+                WS_POPUP,
+                0,
+                0,
+                0,
+                0,
+                None,
+                None,
+                Some(hinst.into()),
+                Some(std::ptr::null::<c_void>()),
+            )
+        }
+        .expect("create test own-process Shell_TrayWnd");
+
+        assert!(!is_taskbar_class(own_hwnd));
+        let discovered = find_taskbar_hwnds();
+        assert!(!discovered.contains(&own_hwnd));
+
+        unsafe {
+            let _ = DestroyWindow(own_hwnd);
+            if atom != 0 {
+                let _ = UnregisterClassW(class_name, Some(hinst.into()));
+            }
         }
     }
 }

@@ -44,6 +44,7 @@ pub use telemetry::read_system_summary;
 pub use thumbnails::{DwmThumbnailHost, capture_window_thumbnail, fit_aspect_rect};
 pub use tray::{
     TrayClickKind, TrayIconInfo, TrayTracker, activate_tray_icon, enumerate_tray_icons,
+    refresh_tray_icons,
 };
 pub use watchdog::{run_watchdog, spawn_watchdog};
 pub use windows::{
