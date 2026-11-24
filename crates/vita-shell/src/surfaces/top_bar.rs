@@ -22,6 +22,8 @@ pub struct TopBarState<'a> {
     pub focus_mode: bool,
     pub quick_controls_open: bool,
     pub notifications_open: bool,
+    pub tray_open: bool,
+    pub calendar_open: bool,
     pub has_unread_notifs: bool,
     pub active_menu: Option<&'a ActiveAppMenu>,
     pub open_global_menu: Option<(usize, usize)>,
@@ -140,10 +142,15 @@ fn view_pantheon_full_width<'a>(state: &TopBarState<'a>) -> Element<'a, Message>
     } else {
         "%a, %b %-d  %H:%M"
     };
-    let clock = text(state.now.format(time_fmt).to_string())
-        .font(FONT_SEMIBOLD)
-        .size(13)
-        .color(icon_fg);
+    let clock = button(
+        text(state.now.format(time_fmt).to_string())
+            .font(FONT_SEMIBOLD)
+            .size(13)
+            .color(icon_fg),
+    )
+    .padding([4, 10])
+    .style(subtle_pill_button(tokens, state.calendar_open, tokens.r8))
+    .on_press(Message::ToggleCalendarOn(state.monitor_idx));
 
     let status_btn = button(status_indicators(
         tokens,
@@ -160,6 +167,7 @@ fn view_pantheon_full_width<'a>(state: &TopBarState<'a>) -> Element<'a, Message>
     .on_press(Message::ToggleQuickControlsOn(state.monitor_idx));
 
     let mut right_items = row![
+        tray_button(tokens, state.tray_open, state.monitor_idx, [4, 7], tokens.r8),
         theme_toggle_button(tokens),
         bell_button(
             tokens,
@@ -286,6 +294,21 @@ fn view_horizon_floating_pills<'a>(state: &TopBarState<'a>) -> Element<'a, Messa
         .into()
     };
 
+    let tray_pill = container(tray_button(
+        tokens,
+        state.tray_open,
+        state.monitor_idx,
+        [4, 7],
+        tokens.pill,
+    ))
+    .height(34)
+    .padding([0, 3])
+    .align_y(Alignment::Center)
+    .style({
+        let tokens = *tokens;
+        move |_| floating_pill_surface(&tokens, tokens.pill)
+    });
+
     let theme_pill = container(theme_toggle_button(tokens))
         .width(34)
         .height(34)
@@ -318,25 +341,13 @@ fn view_horizon_floating_pills<'a>(state: &TopBarState<'a>) -> Element<'a, Messa
         "%a %-d %b  %H:%M"
     };
 
-    let status_pill_content = button(
-        row![
-            status_indicators(tokens, state.summary, state.focus_mode, false),
-            container(Space::new())
-                .width(1)
-                .height(14)
-                .style({
-                    let tokens = *tokens;
-                    move |_| hairline_divider(&tokens)
-                }),
-            text(state.now.format(time_fmt).to_string())
-                .font(FONT_MEDIUM)
-                .size(13)
-                .color(icon_fg),
-        ]
-        .spacing(10)
-        .align_y(Alignment::Center),
-    )
-    .padding([5, 14])
+    let indicators_btn = button(status_indicators(
+        tokens,
+        state.summary,
+        state.focus_mode,
+        false,
+    ))
+    .padding([4, 10])
     .style(subtle_pill_button(
         tokens,
         state.quick_controls_open,
@@ -344,13 +355,38 @@ fn view_horizon_floating_pills<'a>(state: &TopBarState<'a>) -> Element<'a, Messa
     ))
     .on_press(Message::ToggleQuickControlsOn(state.monitor_idx));
 
-    let status_pill = container(status_pill_content)
-        .height(34)
-        .align_y(Alignment::Center)
-        .style({
-            let tokens = *tokens;
-            move |_| floating_pill_surface(&tokens, tokens.pill)
-        });
+    let clock_btn = button(
+        text(state.now.format(time_fmt).to_string())
+            .font(FONT_MEDIUM)
+            .size(13)
+            .color(icon_fg),
+    )
+    .padding([4, 11])
+    .style(subtle_pill_button(tokens, state.calendar_open, tokens.pill))
+    .on_press(Message::ToggleCalendarOn(state.monitor_idx));
+
+    let status_pill = container(
+        row![
+            indicators_btn,
+            container(Space::new())
+                .width(1)
+                .height(14)
+                .style({
+                    let tokens = *tokens;
+                    move |_| hairline_divider(&tokens)
+                }),
+            clock_btn,
+        ]
+        .spacing(2)
+        .align_y(Alignment::Center),
+    )
+    .height(34)
+    .padding([0, 3])
+    .align_y(Alignment::Center)
+    .style({
+        let tokens = *tokens;
+        move |_| floating_pill_surface(&tokens, tokens.pill)
+    });
 
     let power_pill = container(exit_button(tokens))
         .width(34)
@@ -362,7 +398,7 @@ fn view_horizon_floating_pills<'a>(state: &TopBarState<'a>) -> Element<'a, Messa
             move |_| floating_pill_surface(&tokens, tokens.pill)
         });
 
-    let mut right_row = row![theme_pill, bell_pill, status_pill]
+    let mut right_row = row![tray_pill, theme_pill, bell_pill, status_pill]
         .spacing(8)
         .align_y(Alignment::Center);
 
@@ -506,6 +542,29 @@ fn status_indicators<'a>(
     }
 
     items.into()
+}
+
+fn tray_button<'a>(
+    tokens: &'a ThemeTokens,
+    active: bool,
+    monitor_idx: usize,
+    padding: [u16; 2],
+    radius: f32,
+) -> Element<'a, Message> {
+    let icon_fg = color(tokens.text_primary);
+    let muted_fg = color(tokens.text_secondary);
+    button(
+        row![
+            icons::icon(icons::GRID, 13.0, icon_fg),
+            icons::icon(icons::CHEVRON_DOWN, 11.0, muted_fg),
+        ]
+        .spacing(3)
+        .align_y(Alignment::Center),
+    )
+    .padding(padding)
+    .style(subtle_pill_button(tokens, active, radius))
+    .on_press(Message::ToggleTrayOn(monitor_idx))
+    .into()
 }
 
 fn bell_button<'a>(

@@ -1,5 +1,5 @@
 use crate::surfaces::settings::SettingsTab;
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, NaiveDate};
 use iced::{Point, keyboard, window};
 use std::collections::HashMap;
 use std::time::Instant;
@@ -9,7 +9,7 @@ use vita_core::{
     MonitorInfo, RgbaIcon, RunningWindow, ShellConfig, ShellPreset, SpaceInfo, SurfaceMaterial,
     SystemSummary, ThemeMode, TopBarStyle,
 };
-use vita_win32::HotkeyEvent;
+use vita_win32::{HotkeyEvent, SystemNotification, TrayIconInfo};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -26,6 +26,9 @@ pub enum Message {
     MonitorsChanged(Vec<MonitorInfo>),
     PinnedIconsLoaded(HashMap<String, RgbaIcon>),
     InstalledAppsLoaded(Vec<InstalledApp>),
+    TrayIconsUpdated(Vec<TrayIconInfo>),
+    SystemNotificationsUpdated(Vec<SystemNotification>),
+    DockFallbackThumbCaptured(isize, Option<RgbaIcon>),
     ConfigReloaded(ShellConfig),
     Hotkey(HotkeyEvent),
 
@@ -90,6 +93,21 @@ pub enum Message {
     DismissNotification(u64),
     ClearAllNotifications,
     ToastExpired(u64),
+
+    // System Tray & Calendar
+    ToggleTrayOn(usize),
+    TrayIconLeftClicked(usize),
+    TrayIconRightClicked(usize),
+    RefreshTrayIcons,
+    ToggleCalendarOn(usize),
+    CalendarPrevMonth,
+    CalendarNextMonth,
+    CalendarToday,
+    CalendarSelectDate(NaiveDate),
+    CalendarDraftChanged(String),
+    CalendarAddEvent,
+    CalendarToggleEvent(u64),
+    CalendarDeleteEvent(u64),
 
     // Settings Studio
     OpenSettings,

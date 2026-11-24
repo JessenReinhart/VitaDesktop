@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 vita-core = { path = "../vita-core" }
 tokio.workspace = true
+notify.workspace = true
 tracing.workspace = true
 image.workspace = true
 directories.workspace = true
@@ -24,9 +25,12 @@ features = [
     "Win32_NetworkManagement_WiFi",
     "Win32_Security",
     "Win32_Storage_FileSystem",
+    "Win32_Storage_Xps",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
+    "Win32_System_Diagnostics_Debug",
     "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
     "Win32_System_Ole",
     "Win32_System_Power",
     "Win32_System_ProcessStatus",
@@ -36,6 +40,7 @@ features = [
     "Win32_System_Variant",
     "Win32_System_Wmi",
     "Win32_UI_Accessibility",
+    "Win32_UI_Controls",
     "Win32_UI_HiDpi",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",

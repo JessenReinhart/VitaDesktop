@@ -31,6 +31,9 @@ enum CliCommand {
         open_settings: bool,
         open_global_menu: bool,
         open_decorator_preview: bool,
+        open_calendar: bool,
+        open_tray: bool,
+        open_dock_thumbnails: bool,
         settings_tab: SettingsTab,
     },
 }
@@ -48,6 +51,9 @@ fn parse_cli() -> CliCommand {
     let mut open_settings = false;
     let mut open_global_menu = false;
     let mut open_decorator_preview = false;
+    let mut open_calendar = false;
+    let mut open_tray = false;
+    let mut open_dock_thumbnails = false;
     let mut settings_tab = SettingsTab::default();
 
     while i < args.len() {
@@ -83,6 +89,15 @@ fn parse_cli() -> CliCommand {
             }
             "--open-decorator-preview" => {
                 open_decorator_preview = true;
+            }
+            "--open-calendar" => {
+                open_calendar = true;
+            }
+            "--open-tray" => {
+                open_tray = true;
+            }
+            "--open-dock-thumbnails" => {
+                open_dock_thumbnails = true;
             }
             "--debug-tuck" => {
                 app::set_debug_force_tuck(true);
@@ -134,6 +149,9 @@ fn parse_cli() -> CliCommand {
         open_settings,
         open_global_menu,
         open_decorator_preview,
+        open_calendar,
+        open_tray,
+        open_dock_thumbnails,
         settings_tab,
     }
 }
@@ -160,6 +178,9 @@ fn main() -> iced::Result {
             open_settings,
             open_global_menu,
             open_decorator_preview,
+            open_calendar,
+            open_tray,
+            open_dock_thumbnails,
             settings_tab,
         } => {
             let filter = EnvFilter::try_from_default_env()
@@ -204,6 +225,9 @@ fn main() -> iced::Result {
                         open_settings,
                         open_global_menu,
                         open_decorator_preview,
+                        open_calendar,
+                        open_tray,
+                        open_dock_thumbnails,
                         settings_tab,
                         Arc::clone(&guard_for_boot),
                         watchdog_spawned,

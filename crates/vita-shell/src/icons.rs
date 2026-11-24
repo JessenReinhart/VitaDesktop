@@ -44,4 +44,5 @@ pub const PLUS: &[u8] = include_bytes!("../../../assets/icons/plus.svg");
 pub const WINDOW: &[u8] = include_bytes!("../../../assets/icons/window.svg");
 pub const CHEVRON_LEFT: &[u8] = include_bytes!("../../../assets/icons/chevron-left.svg");
 pub const CHEVRON_RIGHT: &[u8] = include_bytes!("../../../assets/icons/chevron-right.svg");
+pub const CHEVRON_DOWN: &[u8] = include_bytes!("../../../assets/icons/chevron-down.svg");
 pub const APP_FALLBACK: &[u8] = include_bytes!("../../../assets/icons/app-fallback.svg");

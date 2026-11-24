@@ -1,8 +1,13 @@
+pub mod calendar;
 pub mod config;
 pub mod models;
 pub mod search;
 pub mod spring;
 pub mod theme;
+
+pub use calendar::{
+    CalendarDay, CalendarEvent, CalendarStore, build_month_grid, next_month, prev_month,
+};
 
 pub use config::{
     AccessibilityConfig, CalmZoneConfig, DecoratorButtonStyle, DockBackgroundStyle, DockConfig,
