@@ -1,5 +1,6 @@
 pub mod appbar;
 pub mod apps;
+pub mod autostart;
 pub mod decorator;
 pub mod global_menu;
 pub mod hotkeys;
@@ -17,6 +18,7 @@ pub mod workspaces;
 
 pub use appbar::{AppBarGuard, WorkAreaGuard, restore_saved_workareas};
 pub use apps::{enumerate_installed_apps, launch_app_aumid, resolve_aumid_icon};
+pub use autostart::{read_launch_entry, set_launch_at_login};
 pub use decorator::{
     DecoratorTracker, DwmWindowThemer, begin_drag_window, dominant_bgra_color,
     inspect_foreground_window, is_window_always_on_top, minimize_window, rgb_to_colorref,

@@ -949,6 +949,14 @@ fn view_bar_and_dock<'a>(state: &SettingsState<'a>) -> Element<'a, Message> {
         tokens,
         "Dock behavior",
         column![
+            toggle_row(
+                tokens,
+                "Show Dock",
+                "Turn the magnifying dock on or off entirely.",
+                config.dock.enabled,
+                Message::SettingsToggleDockEnabled,
+            ),
+            divider(tokens),
             column![
                 text("Dock visibility")
                     .font(FONT_MEDIUM)
@@ -1352,13 +1360,25 @@ fn view_system<'a>(state: &SettingsState<'a>) -> Element<'a, Message> {
     let taskbar_card = section_card(
         tokens,
         "Windows shell integration",
-        toggle_row(
-            tokens,
-            "Hide Windows Taskbar while running",
-            "Uses a non-destructive overlay with an out-of-process recovery watchdog.",
-            config.hide_native_taskbar,
-            Message::SettingsToggleHideTaskbar,
-        ),
+        column![
+            toggle_row(
+                tokens,
+                "Hide Windows Taskbar while running",
+                "Uses a non-destructive overlay with an out-of-process recovery watchdog.",
+                config.hide_native_taskbar,
+                Message::SettingsToggleHideTaskbar,
+            ),
+            divider(tokens),
+            toggle_row(
+                tokens,
+                "Start VitaDesktop at logon",
+                "Registers VitaDesktop in HKCU\\...\\Run so it launches when you sign in.",
+                config.startup.launch_at_login,
+                Message::SettingsToggleLaunchAtLogin,
+            ),
+        ]
+        .spacing(0)
+        .into(),
     );
 
     let action_btn = |label: &'static str, desc: &'static str, msg: Message, danger: bool| {

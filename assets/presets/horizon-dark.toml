@@ -10,6 +10,7 @@ height = 46
 show_seconds = false
 
 [dock]
+enabled = true
 icon_size = 48
 magnification_scale = 1.38
 max_magnify_radius = 128.0
@@ -45,3 +46,8 @@ exe_name = "SystemSettings.exe"
 [accessibility]
 reduce_motion = false
 increase_contrast = false
+
+
+
+
+

@@ -88,6 +88,7 @@ impl DockBackgroundStyle {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DockConfig {
+    pub enabled: bool,
     pub icon_size: u32,
     pub height: u32,
     pub bottom_margin: u32,
@@ -110,6 +111,7 @@ pub struct DockConfig {
 impl Default for DockConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
             icon_size: 48,
             height: 60,
             bottom_margin: 10,
@@ -255,6 +257,21 @@ impl Default for WindowDecoratorConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StartupConfig {
+    /// Register VitaDesktop to auto-start at user logon.
+    pub launch_at_login: bool,
+}
+
+impl Default for StartupConfig {
+    fn default() -> Self {
+        Self {
+            launch_at_login: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ShellConfig {
@@ -269,6 +286,7 @@ pub struct ShellConfig {
     pub calm_zone: CalmZoneConfig,
     pub decorator: WindowDecoratorConfig,
     pub accessibility: AccessibilityConfig,
+    pub startup: StartupConfig,
 }
 
 impl Default for ShellConfig {
@@ -285,6 +303,7 @@ impl Default for ShellConfig {
             calm_zone: CalmZoneConfig::default(),
             decorator: WindowDecoratorConfig::default(),
             accessibility: AccessibilityConfig::default(),
+            startup: StartupConfig::default(),
         }
     }
 }
@@ -505,6 +524,7 @@ mod tests {
         let legacy: ShellConfig = toml::from_str("preset = \"HorizonDark\"\nhide_native_taskbar = true\n")
             .expect("parse legacy config");
         assert!(legacy.top_bar.show_global_menu);
+        assert!(!legacy.startup.launch_at_login);
         assert_eq!(legacy.dock.visibility, DockVisibility::IntelliHide);
         assert!(legacy.dock.all_monitors);
         assert!(legacy.decorator.enabled);
@@ -532,6 +552,7 @@ mod tests {
     #[test]
     fn dock_effective_height_and_background_style_roundtrip() {
         let mut dock = DockConfig {
+            enabled: false,
             icon_size: 32,
             height: 44,
             background_style: DockBackgroundStyle::CustomColor,
@@ -551,5 +572,6 @@ mod tests {
         let serialized = toml::to_string(&dock).expect("serialize dock config");
         let parsed: DockConfig = toml::from_str(&serialized).expect("deserialize dock config");
         assert_eq!(dock, parsed);
+        assert!(!parsed.enabled);
     }
 }

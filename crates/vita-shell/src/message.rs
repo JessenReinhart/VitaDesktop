@@ -132,6 +132,7 @@ pub enum Message {
     SettingsDockIconSizeChanged(u32),
     SettingsDockHeightChanged(u32),
     SettingsDockMagnifyChanged(f32),
+    SettingsToggleDockEnabled,
     SettingsSelectDockVisibility(DockVisibility),
     SettingsToggleDockReserveWorkArea,
     SettingsToggleDockAllMonitors,
@@ -155,6 +156,7 @@ pub enum Message {
     SettingsCalmThreadTitleChanged(String),
     SettingsCalmThreadSubtitleChanged(String),
     SettingsToggleHideTaskbar,
+    SettingsToggleLaunchAtLogin,
     SettingsOpenConfigFile,
     SettingsResetDefaults,
 

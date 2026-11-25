@@ -34,10 +34,10 @@ use vita_win32::{
     launch_target, lock_workstation, minimize_window, monitor_index_from_cursor,
     position_window_bottom, primary_monitor, primary_monitor_index, read_system_summary,
     refresh_tray_icons, reposition_window_physical, resolve_aumid_icon, resolve_pinned_app_icon,
-    restart_system,
-    restore_all_taskbars, rgb_to_colorref, sample_maximized_window_bg, set_display_brightness,
-    set_master_mute, set_master_volume, set_window_visible, shutdown_system, sleep_system,
-    spawn_watchdog, switch_to_space, system_prefers_dark, toggle_maximize_window,
+    restart_system, restore_all_taskbars, rgb_to_colorref, sample_maximized_window_bg,
+    set_display_brightness, set_launch_at_login, set_master_mute, set_master_volume,
+    set_window_visible, shutdown_system, sleep_system, spawn_watchdog, switch_to_space,
+    system_prefers_dark, toggle_maximize_window,
 };
 
 static GLOBAL_MENU_RX: Mutex<Option<mpsc::UnboundedReceiver<Option<ActiveAppMenu>>>> =
@@ -411,7 +411,7 @@ impl VitaShell {
                 DockMagnifier::new(config.dock.magnification_scale, config.dock.max_magnify_radius);
             magnifier.sync_slots(slot_centers.clone());
 
-            let should_open_dock = config.dock.all_monitors || idx == primary_idx;
+            let should_open_dock = config.dock.enabled && (config.dock.all_monitors || idx == primary_idx);
             let dock_id = if should_open_dock {
                 let dock_x = logical.x + (logical.width - dock_w) * 0.5;
                 let dock_y = logical.y + logical.height - dock_h;
@@ -1993,6 +1993,11 @@ impl VitaShell {
                 next.dock.magnification_scale = scale.clamp(1.0, 1.6);
                 self.apply_new_config(next, true)
             }
+            Message::SettingsToggleDockEnabled => {
+                let mut next = self.config.clone();
+                next.dock.enabled = !next.dock.enabled;
+                self.apply_new_config(next, true)
+            }
             Message::SettingsSelectDockVisibility(vis) => {
                 let mut next = self.config.clone();
                 next.dock.visibility = vis;
@@ -2145,6 +2150,25 @@ impl VitaShell {
                 let mut next = self.config.clone();
                 next.hide_native_taskbar = want_hide;
                 self.apply_new_config(next, true)
+            }
+            Message::SettingsToggleLaunchAtLogin => {
+                let want = !self.config.startup.launch_at_login;
+                match set_launch_at_login(want) {
+                    Ok(_) => {
+                        let mut next = self.config.clone();
+                        next.startup.launch_at_login = want;
+                        self.apply_new_config(next, true)
+                    }
+                    Err(err) => {
+                        tracing::error!(?err, "Failed to update VitaDesktop logon registration");
+                        return self.push_notification(
+                            "Startup",
+                            "Could not change startup setting",
+                            "Windows rejected the registry update. Check permissions and retry.",
+                            NotificationLevel::Caution,
+                        );
+                    }
+                }
             }
             Message::SettingsOpenConfigFile => {
                 let _ = self.config.save_atomic();
@@ -4008,6 +4032,7 @@ impl VitaShell {
     fn apply_new_config(&mut self, cfg: ShellConfig, persist: bool) -> Task<Message> {
         let old_topbar_h = self.config.top_bar.height;
         let old_dock_vis = self.config.dock.visibility;
+        let old_dock_enabled = self.config.dock.enabled;
         let old_hide_tb = self.config.hide_native_taskbar;
         self.config = cfg;
         self.system_dark = system_prefers_dark();
@@ -4041,6 +4066,7 @@ impl VitaShell {
         if old_topbar_h != self.config.top_bar.height
             || old_dock_vis != self.config.dock.visibility
             || old_hide_tb != self.config.hide_native_taskbar
+            || old_dock_enabled != self.config.dock.enabled
         {
             let monitors = self.monitor_infos();
             let bottom_reserve = bottom_reserve_for_config(&self.config);
@@ -4118,7 +4144,8 @@ impl VitaShell {
         let mut tasks = Vec::new();
         let mut to_close = Vec::new();
         for idx in 0..self.monitor_shells.len() {
-            let want_dock = self.config.dock.all_monitors || idx == self.primary_monitor_idx;
+            let want_dock = self.config.dock.enabled
+                && (self.config.dock.all_monitors || idx == self.primary_monitor_idx);
             let has_dock = self.monitor_shells[idx].dock_id.is_some();
             if want_dock && !has_dock {
                 let logical = self.monitor_shells[idx].info.logical_bounds();
@@ -4260,7 +4287,7 @@ impl VitaShell {
     }
 
     fn update_dock_visibility(&mut self) {
-        if self.screenshot_dir.is_some() {
+        if self.screenshot_dir.is_some() || !self.config.dock.enabled {
             return;
         }
         let cursor = cursor_position();
