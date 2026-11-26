@@ -12,7 +12,7 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::UI::Shell::{
     BHID_EnumItems, FOLDERID_AppsFolder, IEnumShellItems, IShellItem, IShellItemImageFactory,
-    KF_FLAG_DEFAULT, SHGetKnownFolderItem, SHCreateItemFromParsingName,
+    KF_FLAG_DEFAULT, SHCreateItemFromParsingName, SHGetKnownFolderItem,
     SIGDN_DESKTOPABSOLUTEPARSING, SIGDN_NORMALDISPLAY, SIIGBF_BIGGERSIZEOK, SIIGBF_RESIZETOFIT,
     ShellExecuteW,
 };
@@ -127,24 +127,23 @@ pub fn enumerate_installed_apps() -> Vec<InstalledApp> {
     let cache_dir = icon_cache_dir();
     let _ = fs::create_dir_all(&cache_dir);
 
-    let apps_folder: IShellItem = match unsafe {
-        SHGetKnownFolderItem(&FOLDERID_AppsFolder, KF_FLAG_DEFAULT, None)
-    } {
-        Ok(folder) => folder,
-        Err(err) => {
-            tracing::warn!(?err, "Failed to open FOLDERID_AppsFolder");
-            return Vec::new();
-        }
-    };
+    let apps_folder: IShellItem =
+        match unsafe { SHGetKnownFolderItem(&FOLDERID_AppsFolder, KF_FLAG_DEFAULT, None) } {
+            Ok(folder) => folder,
+            Err(err) => {
+                tracing::warn!(?err, "Failed to open FOLDERID_AppsFolder");
+                return Vec::new();
+            }
+        };
 
-    let enum_items: IEnumShellItems = match unsafe { apps_folder.BindToHandler(None, &BHID_EnumItems) }
-    {
-        Ok(e) => e,
-        Err(err) => {
-            tracing::warn!(?err, "Failed to bind BHID_EnumItems");
-            return Vec::new();
-        }
-    };
+    let enum_items: IEnumShellItems =
+        match unsafe { apps_folder.BindToHandler(None, &BHID_EnumItems) } {
+            Ok(e) => e,
+            Err(err) => {
+                tracing::warn!(?err, "Failed to bind BHID_EnumItems");
+                return Vec::new();
+            }
+        };
 
     let mut apps: Vec<InstalledApp> = Vec::new();
     let mut name_index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
@@ -216,19 +215,17 @@ pub fn launch_app_aumid(aumid_or_target: &str) {
         return;
     }
 
-    let launch_str = if trimmed.starts_with("shell:")
-        || trimmed.contains(":\\")
-        || trimmed.ends_with(':')
-    {
-        trimmed.to_string()
-    } else if trimmed.contains('!')
-        || trimmed.starts_with('{')
-        || trimmed.eq_ignore_ascii_case("MSEdge")
-    {
-        format!("shell:AppsFolder\\{trimmed}")
-    } else {
-        trimmed.to_string()
-    };
+    let launch_str =
+        if trimmed.starts_with("shell:") || trimmed.contains(":\\") || trimmed.ends_with(':') {
+            trimmed.to_string()
+        } else if trimmed.contains('!')
+            || trimmed.starts_with('{')
+            || trimmed.eq_ignore_ascii_case("MSEdge")
+        {
+            format!("shell:AppsFolder\\{trimmed}")
+        } else {
+            trimmed.to_string()
+        };
 
     let wide: Vec<u16> = launch_str.encode_utf16().chain(Some(0)).collect();
     unsafe {
@@ -266,8 +263,17 @@ mod tests {
     #[test]
     fn enumerate_installed_apps_returns_real_apps() {
         let apps = enumerate_installed_apps();
-        assert!(!apps.is_empty(), "Expected FOLDERID_AppsFolder to list installed apps");
-        assert!(apps.iter().all(|a| !a.name.is_empty() && !a.aumid.is_empty()));
-        assert!(apps.iter().any(|a| a.icon.is_some()), "Expected at least one extracted app icon");
+        assert!(
+            !apps.is_empty(),
+            "Expected FOLDERID_AppsFolder to list installed apps"
+        );
+        assert!(
+            apps.iter()
+                .all(|a| !a.name.is_empty() && !a.aumid.is_empty())
+        );
+        assert!(
+            apps.iter().any(|a| a.icon.is_some()),
+            "Expected at least one extracted app icon"
+        );
     }
 }

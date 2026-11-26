@@ -8,13 +8,11 @@ use windows::Win32::Devices::Display::{
 use windows::Win32::Foundation::{POINT, RPC_E_TOO_LATE};
 use windows::Win32::Graphics::Gdi::{MONITOR_DEFAULTTOPRIMARY, MonitorFromPoint};
 use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
-use windows::Win32::Media::Audio::{
-    IMMDeviceEnumerator, MMDeviceEnumerator, eMultimedia, eRender,
-};
+use windows::Win32::Media::Audio::{IMMDeviceEnumerator, MMDeviceEnumerator, eMultimedia, eRender};
 use windows::Win32::System::Com::{
     CLSCTX_ALL, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
-    CoInitializeSecurity, CoSetProxyBlanket, CoUninitialize, EOAC_NONE,
-    RPC_C_AUTHN_LEVEL_CALL, RPC_C_AUTHN_LEVEL_DEFAULT, RPC_C_IMP_LEVEL_IMPERSONATE,
+    CoInitializeSecurity, CoSetProxyBlanket, CoUninitialize, EOAC_NONE, RPC_C_AUTHN_LEVEL_CALL,
+    RPC_C_AUTHN_LEVEL_DEFAULT, RPC_C_IMP_LEVEL_IMPERSONATE,
 };
 use windows::Win32::System::Power::SetSuspendState;
 use windows::Win32::System::Shutdown::LockWorkStation;
@@ -176,7 +174,14 @@ pub(crate) fn read_ddc_brightness() -> Option<u8> {
     let mut min_b = 0u32;
     let mut cur_b = 0u32;
     let mut max_b = 0u32;
-    let ok = unsafe { GetMonitorBrightness(monitors[0].hPhysicalMonitor, &mut min_b, &mut cur_b, &mut max_b) } != 0;
+    let ok = unsafe {
+        GetMonitorBrightness(
+            monitors[0].hPhysicalMonitor,
+            &mut min_b,
+            &mut cur_b,
+            &mut max_b,
+        )
+    } != 0;
     unsafe {
         let _ = DestroyPhysicalMonitors(&monitors);
     }
@@ -207,8 +212,16 @@ fn set_wmi_brightness(pct: u8) -> bool {
     let class_name = BSTR::from("WmiMonitorBrightnessMethods");
     let method_name = BSTR::from("WmiSetBrightness");
     let mut class_obj: Option<IWbemClassObject> = None;
-    if unsafe { services.GetObject(&class_name, Default::default(), None, Some(&mut class_obj), None) }
-        .is_err()
+    if unsafe {
+        services.GetObject(
+            &class_name,
+            Default::default(),
+            None,
+            Some(&mut class_obj),
+            None,
+        )
+    }
+    .is_err()
     {
         return false;
     }
@@ -299,11 +312,14 @@ fn set_ddc_brightness(pct: u8) -> bool {
         let mut min_b = 0u32;
         let mut cur_b = 0u32;
         let mut max_b = 0u32;
-        if unsafe { GetMonitorBrightness(mon.hPhysicalMonitor, &mut min_b, &mut cur_b, &mut max_b) } != 0
+        if unsafe { GetMonitorBrightness(mon.hPhysicalMonitor, &mut min_b, &mut cur_b, &mut max_b) }
+            != 0
             && max_b > min_b
         {
             let target = min_b + ((max_b - min_b) as f32 * f32::from(pct) / 100.0).round() as u32;
-            if unsafe { SetMonitorBrightness(mon.hPhysicalMonitor, target.clamp(min_b, max_b)) } != 0 {
+            if unsafe { SetMonitorBrightness(mon.hPhysicalMonitor, target.clamp(min_b, max_b)) }
+                != 0
+            {
                 any_ok = true;
             }
         }

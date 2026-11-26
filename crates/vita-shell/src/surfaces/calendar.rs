@@ -77,15 +77,10 @@ pub fn view<'a, Msg: Clone + 'a>(
         ]
         .spacing(1),
         space::horizontal(),
-        button(
-            text("Today")
-                .font(FONT_MEDIUM)
-                .size(11.5)
-                .color(primary_fg),
-        )
-        .padding([4, 10])
-        .style(subtle_pill_button(tokens, away_from_today, tokens.pill))
-        .on_press(on_today),
+        button(text("Today").font(FONT_MEDIUM).size(11.5).color(primary_fg),)
+            .padding([4, 10])
+            .style(subtle_pill_button(tokens, away_from_today, tokens.pill))
+            .on_press(on_today),
     ]
     .align_y(Alignment::Center)
     .width(Length::Fill);
@@ -118,14 +113,9 @@ pub fn view<'a, Msg: Clone + 'a>(
     let mut weekday_row = row![].spacing(3).width(Length::Fill);
     for label in weekday_labels {
         weekday_row = weekday_row.push(
-            container(
-                text(*label)
-                    .font(FONT_MEDIUM)
-                    .size(10.5)
-                    .color(muted_fg),
-            )
-            .width(Length::FillPortion(1))
-            .center_x(Length::Fill),
+            container(text(*label).font(FONT_MEDIUM).size(10.5).color(muted_fg))
+                .width(Length::FillPortion(1))
+                .center_x(Length::Fill),
         );
     }
 
@@ -181,9 +171,15 @@ pub fn view<'a, Msg: Clone + 'a>(
             };
 
             let cell_inner = container(
-                column![text(day.date.day().to_string()).font(day_font).size(11.5).color(day_fg), dot]
-                    .spacing(1)
-                    .align_x(Alignment::Center),
+                column![
+                    text(day.date.day().to_string())
+                        .font(day_font)
+                        .size(11.5)
+                        .color(day_fg),
+                    dot
+                ]
+                .spacing(1)
+                .align_x(Alignment::Center),
             )
             .width(Length::Fill)
             .height(Length::Fill)
@@ -202,11 +198,14 @@ pub fn view<'a, Msg: Clone + 'a>(
         grid_rows = grid_rows.push(week_row);
     }
 
-    let calendar_block = column![weekday_row, grid_rows].spacing(4).width(Length::Fill);
+    let calendar_block = column![weekday_row, grid_rows]
+        .spacing(4)
+        .width(Length::Fill);
 
     // Selected-date agenda section
     let selected_key = selected_date.format("%Y-%m-%d").to_string();
-    let day_events: Vec<&CalendarEvent> = events.iter().filter(|e| e.date == selected_key).collect();
+    let day_events: Vec<&CalendarEvent> =
+        events.iter().filter(|e| e.date == selected_key).collect();
 
     let agenda_title = if selected_date == today {
         format!("Today · {}", selected_date.format("%b %-d"))
@@ -469,7 +468,11 @@ fn day_cell_button(
 
         if day.is_selected {
             let fill = if hovered {
-                color(tokens.accent_soft.with_alpha((tokens.accent_soft.a + 0.08).min(0.35)))
+                color(
+                    tokens
+                        .accent_soft
+                        .with_alpha((tokens.accent_soft.a + 0.08).min(0.35)),
+                )
             } else {
                 color(tokens.accent_soft)
             };
@@ -534,8 +537,9 @@ fn reminder_delete_button(
     move |_theme, status| {
         let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
         button::Style {
-            background: hovered
-                .then_some(Background::Color(color(tokens.status_error.with_alpha(0.14)))),
+            background: hovered.then_some(Background::Color(color(
+                tokens.status_error.with_alpha(0.14),
+            ))),
             text_color: color(if hovered {
                 tokens.status_error
             } else {

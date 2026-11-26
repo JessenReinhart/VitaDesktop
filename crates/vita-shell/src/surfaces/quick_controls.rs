@@ -154,10 +154,7 @@ pub fn view<'a>(
                     .padding([2, 3])
                     .style(subtle_pill_button(tokens, summary.is_muted, tokens.r8))
                     .on_press(Message::ToggleMute),
-                text("Volume")
-                    .font(FONT_MEDIUM)
-                    .size(12)
-                    .color(primary_fg),
+                text("Volume").font(FONT_MEDIUM).size(12).color(primary_fg),
                 space::horizontal(),
                 text(vol_label)
                     .font(FONT_MEDIUM)
@@ -247,10 +244,7 @@ pub fn view<'a>(
             container(
                 row![
                     icons::icon(batt_icon, 15.0, primary_fg),
-                    text(batt_text)
-                        .font(FONT_MEDIUM)
-                        .size(12)
-                        .color(primary_fg),
+                    text(batt_text).font(FONT_MEDIUM).size(12).color(primary_fg),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
@@ -336,16 +330,26 @@ pub fn view<'a>(
                 .style(menu_row_button(tokens, false))
                 .on_press(Message::PowerRestart),
                 button(
-                    container(text("Shut down").font(FONT_MEDIUM).size(11).color(danger_fg))
-                        .center_x(Length::Fill)
+                    container(
+                        text("Shut down")
+                            .font(FONT_MEDIUM)
+                            .size(11)
+                            .color(danger_fg)
+                    )
+                    .center_x(Length::Fill)
                 )
                 .width(Length::FillPortion(1))
                 .padding([6, 6])
                 .style(menu_row_button(tokens, true))
                 .on_press(Message::PowerShutdown),
                 button(
-                    container(text("Exit Vita").font(FONT_MEDIUM).size(11).color(secondary_fg))
-                        .center_x(Length::Fill)
+                    container(
+                        text("Exit Vita")
+                            .font(FONT_MEDIUM)
+                            .size(11)
+                            .color(secondary_fg)
+                    )
+                    .center_x(Length::Fill)
                 )
                 .width(Length::FillPortion(1))
                 .padding([6, 6])
@@ -468,8 +472,10 @@ fn pill_switch<'a>(
     });
     let knob_bg = Color::WHITE;
 
-    let knob = container(Space::new()).width(18).height(18).style(move |_| {
-        container::Style {
+    let knob = container(Space::new())
+        .width(18)
+        .height(18)
+        .style(move |_| container::Style {
             background: Some(Background::Color(knob_bg)),
             border: Border {
                 color: Color::from_rgba(0.0, 0.0, 0.0, 0.08),
@@ -477,8 +483,7 @@ fn pill_switch<'a>(
                 radius: Radius::from(9.0),
             },
             ..container::Style::default()
-        }
-    });
+        });
 
     let track_row = if checked {
         row![space::horizontal(), knob]

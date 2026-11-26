@@ -6,11 +6,11 @@ use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, EnumWindows, GetClassNameW, GetMessageW, GetWindowThreadProcessId,
-    IsWindow, IsWindowVisible, KillTimer, MSG, PM_NOREMOVE, PeekMessageW,
-    PostThreadMessageW, SW_HIDE, SW_SHOW, SWP_ASYNCWINDOWPOS, SWP_FRAMECHANGED, SWP_HIDEWINDOW,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SetTimer, SetWindowPos,
-    ShowWindow, ShowWindowAsync, TranslateMessage, WM_QUIT, WM_TIMER, WM_USER,
+    DispatchMessageW, EnumWindows, GetClassNameW, GetMessageW, GetWindowThreadProcessId, IsWindow,
+    IsWindowVisible, KillTimer, MSG, PM_NOREMOVE, PeekMessageW, PostThreadMessageW, SW_HIDE,
+    SW_SHOW, SWP_ASYNCWINDOWPOS, SWP_FRAMECHANGED, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SetTimer, SetWindowPos, ShowWindow, ShowWindowAsync,
+    TranslateMessage, WM_QUIT, WM_TIMER, WM_USER,
 };
 use windows::core::BOOL;
 
@@ -79,7 +79,11 @@ fn hide_hwnd_async(hwnd: HWND) {
                 0,
                 0,
                 0,
-                SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+                SWP_HIDEWINDOW
+                    | SWP_NOMOVE
+                    | SWP_NOSIZE
+                    | SWP_NOZORDER
+                    | SWP_NOACTIVATE
                     | SWP_ASYNCWINDOWPOS,
             );
         }

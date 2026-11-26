@@ -14,10 +14,11 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS,
-    DeleteDC, DeleteObject, GetDC, HBITMAP, HGDIOBJ, HDC, ReleaseDC, SelectObject,
+    DeleteDC, DeleteObject, GetDC, HBITMAP, HDC, HGDIOBJ, ReleaseDC, SelectObject,
 };
 use windows::Win32::System::Com::{
-    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
+    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+    CoUninitialize,
 };
 use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
@@ -315,7 +316,10 @@ pub fn enumerate_tray_icons() -> Vec<TrayIconInfo> {
     let _com = ComGuard::init_sta();
     let uia: Option<IUIAutomation> =
         unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }.ok();
-    let uia_items = uia.as_ref().map(enumerate_uia_tray_icons).unwrap_or_default();
+    let uia_items = uia
+        .as_ref()
+        .map(enumerate_uia_tray_icons)
+        .unwrap_or_default();
     drop(uia);
     deduplicate_tray_items(Vec::new(), uia_items)
 }
@@ -385,8 +389,7 @@ fn find_real_explorer_tray_hwnd() -> Option<HWND> {
 }
 
 fn is_explorer_taskbar_visible() -> bool {
-    find_real_explorer_tray_hwnd()
-        .is_some_and(|hwnd| unsafe { IsWindowVisible(hwnd) }.as_bool())
+    find_real_explorer_tray_hwnd().is_some_and(|hwnd| unsafe { IsWindowVisible(hwnd) }.as_bool())
 }
 
 fn find_foreign_top_level_windows(class_name: PCWSTR) -> Vec<HWND> {
@@ -587,8 +590,8 @@ fn read_toolbar_buttons(toolbar_hwnd: HWND, is_overflow: bool) -> Vec<TrayIconIn
             tooltip = "Tray icon".to_string();
         }
 
-        let icon = hicon_raw_to_rgba(tray.hicon)
-            .or_else(|| cached_window_icon(owner_hwnd, &exe_path));
+        let icon =
+            hicon_raw_to_rgba(tray.hicon).or_else(|| cached_window_icon(owner_hwnd, &exe_path));
 
         let owner_isize = owner_hwnd.0 as isize;
         out.push(TrayIconInfo {
@@ -805,7 +808,10 @@ fn expand_known_folder_path(raw: &str) -> String {
 
     let mappings: &[(&str, &str)] = &[
         ("{6D809377-6AF0-444B-8957-A3773F02200E}", "ProgramW6432"),
-        ("{7C5A40EF-A0FB-4BFC-874A-C0F2E0B9FA8E}", "ProgramFiles(x86)"),
+        (
+            "{7C5A40EF-A0FB-4BFC-874A-C0F2E0B9FA8E}",
+            "ProgramFiles(x86)",
+        ),
         ("{F1B32785-6FBA-4FCF-9D55-7B8E7F157091}", "LOCALAPPDATA"),
         ("{3EB685DB-65F9-4CF6-A03A-E3EF65729F3D}", "APPDATA"),
         ("{62AB5D82-FDC1-4DC3-A9DD-070D1D495D97}", "ProgramData"),
@@ -957,7 +963,10 @@ fn draw_hicon_to_rgba(hicon: HICON, size: i32) -> Option<RgbaIcon> {
     if prev.is_invalid() {
         return None;
     }
-    let _selected = SelectedObjectGuard { hdc: mem_dc.0, prev };
+    let _selected = SelectedObjectGuard {
+        hdc: mem_dc.0,
+        prev,
+    };
 
     let byte_len = (size as usize) * (size as usize) * 4;
     unsafe {
@@ -1099,8 +1108,8 @@ fn apply_parsed_tray_message(state: &mut TrayProxyState, parsed: ParsedShellTray
                     entry.tooltip = clean_tooltip(tip);
                 }
                 if (parsed.u_flags & NIF_STATE) != 0 {
-                    entry.state =
-                        (entry.state & !parsed.dw_state_mask) | (parsed.dw_state & parsed.dw_state_mask);
+                    entry.state = (entry.state & !parsed.dw_state_mask)
+                        | (parsed.dw_state & parsed.dw_state_mask);
                 }
                 let (exe_path, exe_name) = resolve_exe_for_entry(
                     entry.owner_hwnd,
@@ -1116,10 +1125,8 @@ fn apply_parsed_tray_message(state: &mut TrayProxyState, parsed: ParsedShellTray
                         entry.icon = Some(img);
                     }
                 } else if entry.icon.is_none() && entry.owner_hwnd != 0 {
-                    entry.icon = cached_window_icon(
-                        HWND(entry.owner_hwnd as *mut c_void),
-                        &entry.exe_path,
-                    );
+                    entry.icon =
+                        cached_window_icon(HWND(entry.owner_hwnd as *mut c_void), &entry.exe_path);
                 }
                 true
             } else {
@@ -1359,7 +1366,8 @@ unsafe extern "system" fn tray_proxy_wnd_proc(
             let slice =
                 unsafe { std::slice::from_raw_parts(cds.lpData.cast::<u8>(), cds.cbData as usize) };
             if let Some(parsed) = parse_shell_tray_data(slice) {
-                let state_ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *mut TrayProxyState;
+                let state_ptr =
+                    unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *mut TrayProxyState;
                 if !state_ptr.is_null() {
                     let state = unsafe { &mut *state_ptr };
                     if apply_parsed_tray_message(state, parsed) {
@@ -1445,8 +1453,7 @@ fn enumerate_uia_tray_icons(auto: &IUIAutomation) -> Vec<TrayIconInfo> {
             collect_uia_buttons_in_hwnd(auto, &button_cond, shell_hwnd, false, &mut out);
         }
     }
-    for overflow_hwnd in find_foreign_top_level_windows(w!("TopLevelWindowForOverflowXamlIsland"))
-    {
+    for overflow_hwnd in find_foreign_top_level_windows(w!("TopLevelWindowForOverflowXamlIsland")) {
         if unsafe { IsWindowVisible(overflow_hwnd) }.as_bool() {
             let target = find_child_window(
                 overflow_hwnd,
@@ -1684,12 +1691,8 @@ fn ensure_unique_id(id: &mut String, seen_ids: &mut HashSet<String>) {
 }
 
 fn pack_cursor_xy(cursor_xy: (i32, i32)) -> usize {
-    let x = cursor_xy
-        .0
-        .clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16 as u16 as usize;
-    let y = cursor_xy
-        .1
-        .clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16 as u16 as usize;
+    let x = cursor_xy.0.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16 as u16 as usize;
+    let y = cursor_xy.1.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16 as u16 as usize;
     x | (y << 16)
 }
 
@@ -1765,21 +1768,24 @@ fn post_tray_callback_messages(
             TrayClickKind::LeftClick => {
                 for ev in [WM_LBUTTONDOWN, WM_LBUTTONUP] {
                     unsafe {
-                        let _ = PostMessageW(Some(hwnd), callback_msg, std_wparam, LPARAM(ev as isize));
+                        let _ =
+                            PostMessageW(Some(hwnd), callback_msg, std_wparam, LPARAM(ev as isize));
                     }
                 }
             }
             TrayClickKind::DoubleClick => {
                 for ev in [WM_LBUTTONDBLCLK, WM_LBUTTONUP] {
                     unsafe {
-                        let _ = PostMessageW(Some(hwnd), callback_msg, std_wparam, LPARAM(ev as isize));
+                        let _ =
+                            PostMessageW(Some(hwnd), callback_msg, std_wparam, LPARAM(ev as isize));
                     }
                 }
             }
             TrayClickKind::RightClick => {
                 for ev in [WM_RBUTTONDOWN, WM_RBUTTONUP] {
                     unsafe {
-                        let _ = PostMessageW(Some(hwnd), callback_msg, std_wparam, LPARAM(ev as isize));
+                        let _ =
+                            PostMessageW(Some(hwnd), callback_msg, std_wparam, LPARAM(ev as isize));
                     }
                 }
                 if callback_version == Some(3) {
@@ -1799,9 +1805,9 @@ fn post_tray_callback_messages(
 
 fn invoke_uia_tray_item(info: &TrayIconInfo) -> bool {
     let _com = ComGuard::init_sta();
-    let Ok(auto) =
-        (unsafe { CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER) })
-    else {
+    let Ok(auto) = (unsafe {
+        CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+    }) else {
         return false;
     };
     let Ok(button_cond) = (unsafe {
@@ -1991,8 +1997,7 @@ fn run_tray_proxy_thread(
     let registered_here = if atom != 0 {
         true
     } else {
-        std::io::Error::last_os_error().raw_os_error()
-            == Some(ERROR_CLASS_ALREADY_EXISTS.0 as i32)
+        std::io::Error::last_os_error().raw_os_error() == Some(ERROR_CLASS_ALREADY_EXISTS.0 as i32)
     };
 
     let spy_hwnd = if registered_here {
@@ -2197,7 +2202,9 @@ mod tests {
         buf[0x08..0x0C].copy_from_slice(&956u32.to_le_bytes());
         buf[0x0C..0x10].copy_from_slice(&0x0057_0982u32.to_le_bytes());
         buf[0x10..0x14].copy_from_slice(&0x1234u32.to_le_bytes());
-        buf[0x14..0x18].copy_from_slice(&(NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_STATE | NIF_GUID).to_le_bytes());
+        buf[0x14..0x18].copy_from_slice(
+            &(NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_STATE | NIF_GUID).to_le_bytes(),
+        );
         buf[0x18..0x1C].copy_from_slice(&0x0456u32.to_le_bytes());
         buf[0x1C..0x20].copy_from_slice(&0x0001_002Bu32.to_le_bytes());
 
@@ -2216,11 +2223,10 @@ mod tests {
         ];
         buf[0x3B0..0x3C0].copy_from_slice(&guid);
 
-        let exe_utf16: Vec<u16> =
-            r"{6D809377-6AF0-444B-8957-A3773F02200E}\App\widget.exe"
-                .encode_utf16()
-                .chain(std::iter::once(0))
-                .collect();
+        let exe_utf16: Vec<u16> = r"{6D809377-6AF0-444B-8957-A3773F02200E}\App\widget.exe"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
         for (i, u) in exe_utf16.iter().enumerate() {
             buf[0x3C4 + i * 2..0x3C4 + i * 2 + 2].copy_from_slice(&u.to_le_bytes());
         }
@@ -2494,13 +2500,20 @@ mod tests {
                 std::thread::sleep(remaining.min(Duration::from_millis(25)));
             }
             let final_snap = enumerate_tray_icons();
-            assert!(pred(&final_snap), "timed out waiting for expected tray snapshot: {final_snap:?}");
+            assert!(
+                pred(&final_snap),
+                "timed out waiting for expected tray snapshot: {final_snap:?}"
+            );
             final_snap
         };
 
         let fill_utf16 = |dst: &mut [u16], s: &str| {
             dst.fill(0);
-            for (i, u) in s.encode_utf16().take(dst.len().saturating_sub(1)).enumerate() {
+            for (i, u) in s
+                .encode_utf16()
+                .take(dst.len().saturating_sub(1))
+                .enumerate()
+            {
                 dst[i] = u;
             }
         };
@@ -2519,14 +2532,18 @@ mod tests {
         assert!(unsafe { Shell_NotifyIconW(WIN_NIM_ADD, &nid) }.as_bool());
 
         let snap_add = wait_for_match(&mut rx, &|list| {
-            list.iter()
-                .any(|i| i.owner_hwnd == owner_isize && i.uid == TEST_UID && i.tooltip == "VitaTestIcon")
+            list.iter().any(|i| {
+                i.owner_hwnd == owner_isize && i.uid == TEST_UID && i.tooltip == "VitaTestIcon"
+            })
         });
         let added = snap_add
             .iter()
             .find(|i| i.owner_hwnd == owner_isize && i.uid == TEST_UID)
             .expect("added item present");
-        assert!(added.icon.is_some(), "expected RGBA icon extracted for HICON");
+        assert!(
+            added.icon.is_some(),
+            "expected RGBA icon extracted for HICON"
+        );
 
         // NIM_SETVERSION(4)
         nid.Anonymous.uVersion = 4;
@@ -2567,9 +2584,7 @@ mod tests {
         assert!(unsafe { Shell_NotifyIconW(WIN_NIM_MODIFY, &nid) }.as_bool());
         wait_for_match(&mut rx, &|list| {
             list.iter().any(|i| {
-                i.owner_hwnd == owner_isize
-                    && i.uid == TEST_UID
-                    && i.tooltip == "VitaTestUpdated"
+                i.owner_hwnd == owner_isize && i.uid == TEST_UID && i.tooltip == "VitaTestUpdated"
             })
         });
 
@@ -2579,8 +2594,16 @@ mod tests {
         let pump_until = Instant::now() + Duration::from_millis(300);
         let mut received = Vec::new();
         while Instant::now() < pump_until && received.len() < 3 {
-            while unsafe { PeekMessageW(&mut msg, Some(owner_hwnd), 0, 0, windows::Win32::UI::WindowsAndMessaging::PM_REMOVE) }
-                .as_bool()
+            while unsafe {
+                PeekMessageW(
+                    &mut msg,
+                    Some(owner_hwnd),
+                    0,
+                    0,
+                    windows::Win32::UI::WindowsAndMessaging::PM_REMOVE,
+                )
+            }
+            .as_bool()
             {
                 unsafe {
                     let _ = TranslateMessage(&msg);
@@ -2594,7 +2617,11 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
         }
-        assert_eq!(received.len(), 3, "expected 3 v4 right-click callbacks: {received:?}");
+        assert_eq!(
+            received.len(),
+            3,
+            "expected 3 v4 right-click callbacks: {received:?}"
+        );
         assert_eq!(received[0].0, pack_cursor_xy((123, 456)));
         assert_eq!(received[0].1, pack_v4_lparam(WM_RBUTTONDOWN, TEST_UID));
         assert_eq!(received[1].1, pack_v4_lparam(WM_RBUTTONUP, TEST_UID));

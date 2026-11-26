@@ -82,17 +82,12 @@ pub fn view<'a>(
                 ]
                 .spacing(2),
                 space::horizontal(),
-                button(
-                    text("Open Notes")
-                        .font(FONT_MEDIUM)
-                        .size(11)
-                        .color(warm_fg),
-                )
-                .padding([6, 10])
-                .style(surface_card_button(tokens, false, tokens.pill))
-                .on_press(Message::OpenTargetAndDismiss(
-                    "shell:AppsFolder\\Microsoft.WindowsNotepad_8wekyb3d8bbwe!App".to_string(),
-                )),
+                button(text("Open Notes").font(FONT_MEDIUM).size(11).color(warm_fg),)
+                    .padding([6, 10])
+                    .style(surface_card_button(tokens, false, tokens.pill))
+                    .on_press(Message::OpenTargetAndDismiss(
+                        "shell:AppsFolder\\Microsoft.WindowsNotepad_8wekyb3d8bbwe!App".to_string(),
+                    )),
             ]
             .spacing(8)
             .align_y(Alignment::Center),
@@ -113,12 +108,10 @@ pub fn view<'a>(
             }
         });
 
-        content = content.push(
-            container(thread_card).padding(Padding {
-                top: 8.0,
-                ..Padding::ZERO
-            }),
-        );
+        content = content.push(container(thread_card).padding(Padding {
+            top: 8.0,
+            ..Padding::ZERO
+        }));
     }
 
     let bg = match tokens.material {

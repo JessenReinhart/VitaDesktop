@@ -177,10 +177,7 @@ fn view_context_menu<'a>(tokens: &'a ThemeTokens, item: &'a DockItem) -> Element
         button(
             row![
                 icons::icon(pin_icon, 14.0, primary_fg),
-                text(pin_text)
-                    .font(FONT_MEDIUM)
-                    .size(12)
-                    .color(primary_fg),
+                text(pin_text).font(FONT_MEDIUM).size(12).color(primary_fg),
             ]
             .spacing(10)
             .align_y(Alignment::Center),

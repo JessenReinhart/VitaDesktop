@@ -171,13 +171,19 @@ pub enum WindowMenuAction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GlobalMenuAction {
-    Win32Command { hwnd: isize, command_id: u32 },
+    Win32Command {
+        hwnd: isize,
+        command_id: u32,
+    },
     UiaInvoke {
         hwnd: isize,
         menu_index: usize,
         item_index: usize,
     },
-    SyntheticMenuClick { hwnd: isize, index: usize },
+    SyntheticMenuClick {
+        hwnd: isize,
+        index: usize,
+    },
     WindowAction(WindowMenuAction),
 }
 

@@ -12,7 +12,8 @@ use vita_core::{
 };
 use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::System::Com::{
-    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
+    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+    CoUninitialize,
 };
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
@@ -23,9 +24,9 @@ use windows::Win32::UI::Accessibility::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumChildWindows, GetClassNameW, GetMenu, GetMenuItemCount, GetMenuItemInfoW, GetSubMenu,
-    GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, HMENU,
-    IsWindow, IsZoomed, MENUITEMINFOW, MFS_CHECKED, MFS_DISABLED, MFT_SEPARATOR, MIIM_FTYPE,
-    MIIM_ID, MIIM_STATE, MIIM_STRING, MIIM_SUBMENU, OBJID_CLIENT, PostMessageW, SC_KEYMENU,
+    GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, HMENU, IsWindow,
+    IsZoomed, MENUITEMINFOW, MFS_CHECKED, MFS_DISABLED, MFT_SEPARATOR, MIIM_FTYPE, MIIM_ID,
+    MIIM_STATE, MIIM_STRING, MIIM_SUBMENU, OBJID_CLIENT, PostMessageW, SC_KEYMENU,
     SMTO_ABORTIFHUNG, SendMessageTimeoutW, SetForegroundWindow, WM_COMMAND, WM_GETOBJECT,
     WM_SYSCOMMAND,
 };
@@ -107,7 +108,9 @@ impl GlobalMenuWorker {
     }
 
     pub fn inspect_window(&self, hwnd: isize, monitor_idx: usize) {
-        let _ = self.cmd_tx.send(GlobalMenuCmd::Inspect { hwnd, monitor_idx });
+        let _ = self
+            .cmd_tx
+            .send(GlobalMenuCmd::Inspect { hwnd, monitor_idx });
     }
 
     pub fn load_submenu(&self, hwnd: isize, menu_index: usize) {
@@ -219,11 +222,7 @@ fn run_inspect(hwnd: isize, monitor_idx: usize, is_retry: bool, ctx: &mut MenuWo
     ctx.uia_cached_subitems
         .resize_with(ctx.uia_top_items.len(), Vec::new);
 
-    if is_chromium
-        && ctx.uia_top_items.is_empty()
-        && !is_retry
-        && ctx.retried_hwnd != Some(hwnd)
-    {
+    if is_chromium && ctx.uia_top_items.is_empty() && !is_retry && ctx.retried_hwnd != Some(hwnd) {
         ctx.retried_hwnd = Some(hwnd);
         let tx2 = ctx.retry_tx.clone();
         std::thread::spawn(move || {
@@ -252,7 +251,8 @@ fn execute_global_menu_action(
             if unsafe { IsWindow(Some(h)) }.as_bool() {
                 unsafe {
                     let _ = SetForegroundWindow(h);
-                    let _ = PostMessageW(Some(h), WM_COMMAND, WPARAM(command_id as usize), LPARAM(0));
+                    let _ =
+                        PostMessageW(Some(h), WM_COMMAND, WPARAM(command_id as usize), LPARAM(0));
                 }
             }
         }
@@ -271,7 +271,9 @@ fn execute_global_menu_action(
             if let Some(menu) = current_menu
                 && let Some(cat) = menu.categories.get(menu_index)
                 && let Some(uia_idx) = cat.lazy_uia_index
-                && let Some(el) = uia_cached_subitems.get(uia_idx).and_then(|v| v.get(item_index))
+                && let Some(el) = uia_cached_subitems
+                    .get(uia_idx)
+                    .and_then(|v| v.get(item_index))
             {
                 if let Ok(inv_pat) = unsafe {
                     el.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId)
@@ -315,7 +317,12 @@ fn execute_global_menu_action(
             }
             if uia.is_some() {
                 unsafe {
-                    let _ = PostMessageW(Some(h), WM_SYSCOMMAND, WPARAM(SC_KEYMENU as usize), LPARAM(0));
+                    let _ = PostMessageW(
+                        Some(h),
+                        WM_SYSCOMMAND,
+                        WPARAM(SC_KEYMENU as usize),
+                        LPARAM(0),
+                    );
                 }
             }
         }
@@ -456,11 +463,7 @@ fn fallback_electron_menus(hwnd: isize, exe_name: &str) -> Vec<GlobalMenuCategor
         .collect()
 }
 
-fn build_universal_app_category(
-    hwnd: isize,
-    app_name: &str,
-    exe_path: &str,
-) -> GlobalMenuCategory {
+fn build_universal_app_category(hwnd: isize, app_name: &str, exe_path: &str) -> GlobalMenuCategory {
     let is_max = unsafe { IsZoomed(HWND(hwnd as *mut c_void)) }.as_bool();
     let is_top = is_window_always_on_top(hwnd);
 
@@ -471,9 +474,11 @@ fn build_universal_app_category(
             enabled: !exe_path.trim().is_empty(),
             checked: false,
             is_separator: false,
-            action: Some(GlobalMenuAction::WindowAction(WindowMenuAction::NewWindow {
-                exe_path: exe_path.to_string(),
-            })),
+            action: Some(GlobalMenuAction::WindowAction(
+                WindowMenuAction::NewWindow {
+                    exe_path: exe_path.to_string(),
+                },
+            )),
         },
         separator_item(),
         GlobalMenuItem {
@@ -482,7 +487,9 @@ fn build_universal_app_category(
             enabled: true,
             checked: false,
             is_separator: false,
-            action: Some(GlobalMenuAction::WindowAction(WindowMenuAction::Minimize(hwnd))),
+            action: Some(GlobalMenuAction::WindowAction(WindowMenuAction::Minimize(
+                hwnd,
+            ))),
         },
         GlobalMenuItem {
             label: if is_max {
@@ -494,7 +501,9 @@ fn build_universal_app_category(
             enabled: true,
             checked: false,
             is_separator: false,
-            action: Some(GlobalMenuAction::WindowAction(WindowMenuAction::ToggleMaximize(hwnd))),
+            action: Some(GlobalMenuAction::WindowAction(
+                WindowMenuAction::ToggleMaximize(hwnd),
+            )),
         },
         GlobalMenuItem {
             label: "Always on Top".to_string(),
@@ -502,7 +511,9 @@ fn build_universal_app_category(
             enabled: true,
             checked: is_top,
             is_separator: false,
-            action: Some(GlobalMenuAction::WindowAction(WindowMenuAction::ToggleAlwaysOnTop(hwnd))),
+            action: Some(GlobalMenuAction::WindowAction(
+                WindowMenuAction::ToggleAlwaysOnTop(hwnd),
+            )),
         },
         GlobalMenuItem {
             label: "Move to Next Space".to_string(),
@@ -510,7 +521,9 @@ fn build_universal_app_category(
             enabled: true,
             checked: false,
             is_separator: false,
-            action: Some(GlobalMenuAction::WindowAction(WindowMenuAction::MoveToNextSpace(hwnd))),
+            action: Some(GlobalMenuAction::WindowAction(
+                WindowMenuAction::MoveToNextSpace(hwnd),
+            )),
         },
         separator_item(),
         GlobalMenuItem {
@@ -519,7 +532,9 @@ fn build_universal_app_category(
             enabled: true,
             checked: false,
             is_separator: false,
-            action: Some(GlobalMenuAction::WindowAction(WindowMenuAction::QuitApp(hwnd))),
+            action: Some(GlobalMenuAction::WindowAction(WindowMenuAction::QuitApp(
+                hwnd,
+            ))),
         },
     ];
 
@@ -569,7 +584,8 @@ fn extract_win32_submenu_items(hwnd: isize, sub: HMENU) -> Vec<GlobalMenuItem> {
     }
     let mut out = Vec::new();
     for idx in 0..(count as usize).min(36) {
-        let Some((raw, id, is_sep, enabled, checked, nested)) = read_menu_item_info(sub, idx as u32)
+        let Some((raw, id, is_sep, enabled, checked, nested)) =
+            read_menu_item_info(sub, idx as u32)
         else {
             continue;
         };
@@ -594,8 +610,10 @@ fn extract_win32_submenu_items(hwnd: isize, sub: HMENU) -> Vec<GlobalMenuItem> {
             enabled: enabled && !has_nested && id != 0,
             checked,
             is_separator: false,
-            action: (!has_nested && id != 0)
-                .then_some(GlobalMenuAction::Win32Command { hwnd, command_id: id }),
+            action: (!has_nested && id != 0).then_some(GlobalMenuAction::Win32Command {
+                hwnd,
+                command_id: id,
+            }),
         });
     }
     if out.last().is_some_and(|i| i.is_separator) {
@@ -604,10 +622,7 @@ fn extract_win32_submenu_items(hwnd: isize, sub: HMENU) -> Vec<GlobalMenuItem> {
     out
 }
 
-fn read_menu_item_info(
-    menu: HMENU,
-    pos: u32,
-) -> Option<(String, u32, bool, bool, bool, HMENU)> {
+fn read_menu_item_info(menu: HMENU, pos: u32) -> Option<(String, u32, bool, bool, bool, HMENU)> {
     let mut buf = [0u16; 128];
     let mut info = MENUITEMINFOW {
         cbSize: std::mem::size_of::<MENUITEMINFOW>() as u32,
@@ -670,8 +685,7 @@ fn extract_uia_top_menus(
             let name = unsafe { bar.CurrentName() }
                 .map(|s| s.to_string())
                 .unwrap_or_default();
-            if auto_id.eq_ignore_ascii_case("SystemMenuBar")
-                || name.eq_ignore_ascii_case("System")
+            if auto_id.eq_ignore_ascii_case("SystemMenuBar") || name.eq_ignore_ascii_case("System")
             {
                 continue;
             }
@@ -797,7 +811,8 @@ fn extract_uia_submenu_items(
 ) -> (Vec<GlobalMenuItem>, Vec<IUIAutomationElement>) {
     let mut expanded_here = false;
     if let Ok(exp_pat) = unsafe {
-        top_item.GetCurrentPatternAs::<IUIAutomationExpandCollapsePattern>(UIA_ExpandCollapsePatternId)
+        top_item
+            .GetCurrentPatternAs::<IUIAutomationExpandCollapsePattern>(UIA_ExpandCollapsePatternId)
     } && unsafe { exp_pat.CurrentExpandCollapseState() }
         .is_ok_and(|s| s == ExpandCollapseState_Collapsed)
     {
@@ -1019,8 +1034,14 @@ mod tests {
 
     #[test]
     fn friendly_names_format_cleanly() {
-        assert_eq!(friendly_app_name("WindowsTerminal.exe", "PowerShell"), "Terminal");
-        assert_eq!(friendly_app_name("Code.exe", "main.rs - VS Code"), "VS Code");
+        assert_eq!(
+            friendly_app_name("WindowsTerminal.exe", "PowerShell"),
+            "Terminal"
+        );
+        assert_eq!(
+            friendly_app_name("Code.exe", "main.rs - VS Code"),
+            "VS Code"
+        );
         assert_eq!(friendly_app_name("notepad.exe", "Untitled"), "Notepad");
         assert_eq!(friendly_app_name("obsidian.exe", "Notes"), "Obsidian");
     }

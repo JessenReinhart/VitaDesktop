@@ -71,7 +71,11 @@ fn global_menu_strip<'a>(
     for (idx, cat) in menu.categories.iter().take(7).enumerate() {
         let is_open = state.open_global_menu == Some((state.monitor_idx, idx));
         let label = truncate(&cat.label, if idx == 0 { 16 } else { 12 });
-        let font = if idx == 0 { FONT_SEMIBOLD } else { FONT_REGULAR };
+        let font = if idx == 0 {
+            FONT_SEMIBOLD
+        } else {
+            FONT_REGULAR
+        };
         let fg = if idx == 0 || is_open {
             primary_fg
         } else {
@@ -110,27 +114,26 @@ fn view_pantheon_full_width<'a>(state: &TopBarState<'a>) -> Element<'a, Message>
     .style(subtle_pill_button(tokens, false, tokens.r8))
     .on_press(Message::ToggleLauncherOn(state.monitor_idx));
 
-    let secondary_left: Element<'a, Message> = if let Some(gm) =
-        global_menu_strip(state, tokens, tokens.r8)
-    {
-        gm
-    } else {
-        button(
-            row![
-                icons::icon(icons::LAYERS, 13.0, muted_fg),
-                text(config.preset.label())
-                    .font(FONT_MEDIUM)
-                    .size(11)
-                    .color(muted_fg),
-            ]
-            .spacing(5)
-            .align_y(Alignment::Center),
-        )
-        .padding([3, 8])
-        .style(subtle_pill_button(tokens, false, tokens.pill))
-        .on_press(Message::CyclePreset)
-        .into()
-    };
+    let secondary_left: Element<'a, Message> =
+        if let Some(gm) = global_menu_strip(state, tokens, tokens.r8) {
+            gm
+        } else {
+            button(
+                row![
+                    icons::icon(icons::LAYERS, 13.0, muted_fg),
+                    text(config.preset.label())
+                        .font(FONT_MEDIUM)
+                        .size(11)
+                        .color(muted_fg),
+                ]
+                .spacing(5)
+                .align_y(Alignment::Center),
+            )
+            .padding([3, 8])
+            .style(subtle_pill_button(tokens, false, tokens.pill))
+            .on_press(Message::CyclePreset)
+            .into()
+        };
 
     let left_cluster = container(
         row![apps_btn, secondary_left]
@@ -170,7 +173,13 @@ fn view_pantheon_full_width<'a>(state: &TopBarState<'a>) -> Element<'a, Message>
     .on_press(Message::ToggleQuickControlsOn(state.monitor_idx));
 
     let mut right_items = row![
-        tray_button(tokens, state.tray_open, state.monitor_idx, [4, 7], tokens.r8),
+        tray_button(
+            tokens,
+            state.tray_open,
+            state.monitor_idx,
+            [4, 7],
+            tokens.r8
+        ),
         theme_toggle_button(tokens),
         bell_button(
             tokens,
@@ -227,7 +236,9 @@ fn view_pantheon_full_width<'a>(state: &TopBarState<'a>) -> Element<'a, Message>
                 if solid_progress > 0.001 {
                     let base_a = tokens.surface_topbar.a;
                     let a = base_a + (1.0 - base_a) * solid_progress;
-                    s.background = Some(Background::Color(color(tokens.surface_topbar.with_alpha(a))));
+                    s.background = Some(Background::Color(color(
+                        tokens.surface_topbar.with_alpha(a),
+                    )));
                 }
                 s
             }
@@ -261,43 +272,42 @@ fn view_horizon_floating_pills<'a>(state: &TopBarState<'a>) -> Element<'a, Messa
         move |_| floating_pill_surface(&tokens, tokens.pill)
     });
 
-    let secondary_left_pill: Element<'a, Message> = if let Some(gm) =
-        global_menu_strip(state, tokens, tokens.pill)
-    {
-        container(gm)
+    let secondary_left_pill: Element<'a, Message> =
+        if let Some(gm) = global_menu_strip(state, tokens, tokens.pill) {
+            container(gm)
+                .height(34)
+                .padding([0, 6])
+                .align_y(Alignment::Center)
+                .style({
+                    let tokens = *tokens;
+                    move |_| floating_pill_surface(&tokens, tokens.pill)
+                })
+                .into()
+        } else {
+            container(
+                button(
+                    row![
+                        icons::icon(icons::LAYERS, 13.0, muted_fg),
+                        text(config.preset.label())
+                            .font(FONT_MEDIUM)
+                            .size(12)
+                            .color(muted_fg),
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center),
+                )
+                .padding([5, 12])
+                .style(subtle_pill_button(tokens, false, tokens.pill))
+                .on_press(Message::CyclePreset),
+            )
             .height(34)
-            .padding([0, 6])
             .align_y(Alignment::Center)
             .style({
                 let tokens = *tokens;
                 move |_| floating_pill_surface(&tokens, tokens.pill)
             })
             .into()
-    } else {
-        container(
-            button(
-                row![
-                    icons::icon(icons::LAYERS, 13.0, muted_fg),
-                    text(config.preset.label())
-                        .font(FONT_MEDIUM)
-                        .size(12)
-                        .color(muted_fg),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-            )
-            .padding([5, 12])
-            .style(subtle_pill_button(tokens, false, tokens.pill))
-            .on_press(Message::CyclePreset),
-        )
-        .height(34)
-        .align_y(Alignment::Center)
-        .style({
-            let tokens = *tokens;
-            move |_| floating_pill_surface(&tokens, tokens.pill)
-        })
-        .into()
-    };
+        };
 
     let tray_pill = container(tray_button(
         tokens,
@@ -373,13 +383,10 @@ fn view_horizon_floating_pills<'a>(state: &TopBarState<'a>) -> Element<'a, Messa
     let status_pill = container(
         row![
             indicators_btn,
-            container(Space::new())
-                .width(1)
-                .height(14)
-                .style({
-                    let tokens = *tokens;
-                    move |_| hairline_divider(&tokens)
-                }),
+            container(Space::new()).width(1).height(14).style({
+                let tokens = *tokens;
+                move |_| hairline_divider(&tokens)
+            }),
             clock_btn,
         ]
         .spacing(2)
@@ -584,16 +591,17 @@ fn bell_button<'a>(
     let bell = icons::icon(icons::BELL, 15.0, icon_fg);
     let content: Element<'a, Message> = if has_unread {
         let dot_color = color(tokens.accent_warm);
-        let dot = container(Space::new()).width(6).height(6).style(move |_| {
-            container::Style {
+        let dot = container(Space::new())
+            .width(6)
+            .height(6)
+            .style(move |_| container::Style {
                 background: Some(Background::Color(dot_color)),
                 border: Border {
                     radius: Radius::from(3.0),
                     ..Border::default()
                 },
                 ..container::Style::default()
-            }
-        });
+            });
         stack![
             bell,
             container(dot)
@@ -645,14 +653,22 @@ mod tests {
     #[test]
     fn horizon_floating_pills_view_builds_with_and_without_matched_maximized_bg() {
         for (preset, matched, opacity) in [
-            (ShellPreset::HorizonLight, Some(RgbaColor::from_hex("#1F2330")), 1.0),
+            (
+                ShellPreset::HorizonLight,
+                Some(RgbaColor::from_hex("#1F2330")),
+                1.0,
+            ),
             (
                 ShellPreset::HorizonLight,
                 Some(RgbaColor::from_hex("#1F2330").with_alpha(0.5)),
                 0.5,
             ),
             (ShellPreset::HorizonLight, None, 0.0),
-            (ShellPreset::HorizonDark, Some(RgbaColor::from_hex("#F3F4F6")), 1.0),
+            (
+                ShellPreset::HorizonDark,
+                Some(RgbaColor::from_hex("#F3F4F6")),
+                1.0,
+            ),
         ] {
             let mut config = ShellConfig::default();
             config.apply_preset(preset);

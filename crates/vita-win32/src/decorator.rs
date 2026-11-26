@@ -14,8 +14,8 @@ use vita_core::{DecoratedWindowState, DecoratorMode, MonitorInfo, PhysicalRect, 
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
-    DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE,
-    DWMWCP_ROUND, DwmGetWindowAttribute, DwmSetWindowAttribute,
+    DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+    DwmGetWindowAttribute, DwmSetWindowAttribute,
 };
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BitBlt, CLR_INVALID, ClientToScreen, CreateCompatibleDC,
@@ -519,7 +519,12 @@ pub fn begin_drag_window(hwnd_raw: isize) {
         let _ = ReleaseCapture();
         let _ = SetForegroundWindow(hwnd);
         // HTCAPTION == 2; SC_MOVE + HTCAPTION starts native title-bar move loop.
-        let _ = PostMessageW(Some(hwnd), WM_SYSCOMMAND, WPARAM((SC_MOVE as usize) + 2), LPARAM(0));
+        let _ = PostMessageW(
+            Some(hwnd),
+            WM_SYSCOMMAND,
+            WPARAM((SC_MOVE as usize) + 2),
+            LPARAM(0),
+        );
     }
 }
 

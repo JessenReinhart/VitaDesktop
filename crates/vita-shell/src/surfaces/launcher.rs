@@ -79,9 +79,7 @@ pub fn view<'a>(state: LauncherState<'a>) -> Element<'a, Message> {
                     tokens,
                     state.view_mode == LauncherViewMode::Category
                 ))
-                .on_press(Message::LauncherViewModeChanged(
-                    LauncherViewMode::Category
-                )),
+                .on_press(Message::LauncherViewModeChanged(LauncherViewMode::Category)),
         ]
         .spacing(2)
         .align_y(Alignment::Center),
@@ -337,16 +335,19 @@ fn build_grid_body<'a>(
                 tokens.border_control
             });
             dots = dots.push(
-                button(container(Space::new()).width(dot_w).height(6).style(move |_| {
-                    container::Style {
-                        background: Some(Background::Color(dot_color)),
-                        border: Border {
-                            radius: Radius::from(3.0),
-                            ..Border::default()
-                        },
-                        ..container::Style::default()
-                    }
-                }))
+                button(
+                    container(Space::new())
+                        .width(dot_w)
+                        .height(6)
+                        .style(move |_| container::Style {
+                            background: Some(Background::Color(dot_color)),
+                            border: Border {
+                                radius: Radius::from(3.0),
+                                ..Border::default()
+                            },
+                            ..container::Style::default()
+                        }),
+                )
                 .padding([4, 2])
                 .style(|_, _| button::Style {
                     background: None,

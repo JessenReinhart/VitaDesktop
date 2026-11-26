@@ -10,9 +10,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedSender;
 use vita_core::{MonitorInfo, PhysicalRect, RgbaIcon, RunningWindow};
-use windows::Win32::Foundation::{
-    CloseHandle, HWND, LPARAM, RECT, SIZE, WPARAM,
-};
+use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT, SIZE, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute,
 };
@@ -31,13 +29,13 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::Shell::{
-    IShellItemImageFactory, SHCreateItemFromParsingName, SHFILEINFOW, SHGFI_ICON,
-    SHGFI_LARGEICON, SHGetFileInfoW, SIIGBF_BIGGERSIZEOK, SIIGBF_RESIZETOFIT, ShellExecuteW,
+    IShellItemImageFactory, SHCreateItemFromParsingName, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON,
+    SHGetFileInfoW, SIIGBF_BIGGERSIZEOK, SIIGBF_RESIZETOFIT, ShellExecuteW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     DestroyIcon, DispatchMessageW, EnumWindows, GCLP_HICON, GW_OWNER, GWL_EXSTYLE,
-    GetClassLongPtrW, GetClassNameW, GetForegroundWindow, GetIconInfo, GetMessageW,
-    GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
+    GetClassLongPtrW, GetClassNameW, GetForegroundWindow, GetIconInfo, GetMessageW, GetWindow,
+    GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
     GetWindowThreadProcessId, HICON, ICON_BIG, ICON_SMALL2, ICONINFO, IsIconic, IsWindow,
     IsWindowVisible, IsZoomed, KillTimer, MSG, PM_NOREMOVE, PeekMessageW, PostMessageW,
     PostThreadMessageW, SMTO_ABORTIFHUNG, SW_MINIMIZE, SW_RESTORE, SW_SHOWNORMAL,
@@ -337,7 +335,11 @@ fn inspect_window(
     let class_name = String::from_utf16_lossy(&class_buf[..class_len.max(0) as usize]);
     if matches!(
         class_name.as_str(),
-        "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd" | "Windows.UI.Core.CoreWindow"
+        "Progman"
+            | "WorkerW"
+            | "Shell_TrayWnd"
+            | "Shell_SecondaryTrayWnd"
+            | "Windows.UI.Core.CoreWindow"
     ) {
         return None;
     }
@@ -464,13 +466,15 @@ pub fn resolve_pinned_app_icon(target: &str, exe_name: &str) -> Option<RgbaIcon>
         return cached.clone();
     }
 
-    let known_aumid = known_aumid_for_app(target, exe_name).map(str::to_string).or_else(|| {
-        if target.contains('!') || target.starts_with('{') {
-            Some(target.to_string())
-        } else {
-            None
-        }
-    });
+    let known_aumid = known_aumid_for_app(target, exe_name)
+        .map(str::to_string)
+        .or_else(|| {
+            if target.contains('!') || target.starts_with('{') {
+                Some(target.to_string())
+            } else {
+                None
+            }
+        });
     let icon = known_aumid
         .as_deref()
         .and_then(|aumid| extract_shell_item_icon(&format!("shell:AppsFolder\\{aumid}")))
@@ -487,8 +491,7 @@ pub fn resolve_pinned_app_icon(target: &str, exe_name: &str) -> Option<RgbaIcon>
 }
 
 fn known_aumid_for_app(target: &str, exe_name: &str) -> Option<&'static str> {
-    if target.eq_ignore_ascii_case("wt.exe")
-        || exe_name.eq_ignore_ascii_case("WindowsTerminal.exe")
+    if target.eq_ignore_ascii_case("wt.exe") || exe_name.eq_ignore_ascii_case("WindowsTerminal.exe")
     {
         Some("Microsoft.WindowsTerminal_8wekyb3d8bbwe!App")
     } else if target.eq_ignore_ascii_case("ms-settings:")
@@ -546,15 +549,7 @@ fn resolve_executable_path(name: &str) -> Option<String> {
 
     let wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
     let mut out = [0u16; 1024];
-    let len = unsafe {
-        SearchPathW(
-            None,
-            PCWSTR(wide.as_ptr()),
-            None,
-            Some(&mut out),
-            None,
-        )
-    };
+    let len = unsafe { SearchPathW(None, PCWSTR(wide.as_ptr()), None, Some(&mut out), None) };
     if len > 0 && (len as usize) < out.len() {
         return Some(String::from_utf16_lossy(&out[..len as usize]));
     }
@@ -579,12 +574,11 @@ fn resolve_executable_path(name: &str) -> Option<String> {
 }
 
 fn lookup_app_paths_registry(exe_name: &str) -> Option<String> {
-    let subkey: Vec<u16> = format!(
-        "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\{exe_name}"
-    )
-    .encode_utf16()
-    .chain(Some(0))
-    .collect();
+    let subkey: Vec<u16> =
+        format!("Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\{exe_name}")
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
     for root in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
         let mut buf = [0u16; 1024];
         let mut bytes = (buf.len() * 2) as u32;

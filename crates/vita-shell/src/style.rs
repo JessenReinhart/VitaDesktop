@@ -270,7 +270,9 @@ pub fn segmented_item_button(
         let bg = if active {
             Some(Background::Color(color(tokens.surface_elevated)))
         } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-            Some(Background::Color(color(tokens.surface_elevated.with_alpha(0.55))))
+            Some(Background::Color(color(
+                tokens.surface_elevated.with_alpha(0.55),
+            )))
         } else {
             None
         };

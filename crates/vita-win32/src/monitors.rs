@@ -130,7 +130,9 @@ pub fn monitor_index_from_cursor(monitors: &[MonitorInfo]) -> usize {
         return 0;
     }
     if let Some((x, y)) = cursor_position()
-        && let Some(idx) = monitors.iter().position(|m| m.physical_bounds.contains_point(x, y))
+        && let Some(idx) = monitors
+            .iter()
+            .position(|m| m.physical_bounds.contains_point(x, y))
     {
         return idx;
     }
@@ -144,7 +146,10 @@ pub fn monitor_index_for_rect(monitors: &[MonitorInfo], rect: PhysicalRect) -> u
     }
     let cx = rect.x + rect.width / 2;
     let cy = rect.y + rect.height / 2;
-    if let Some(idx) = monitors.iter().position(|m| m.physical_bounds.contains_point(cx, cy)) {
+    if let Some(idx) = monitors
+        .iter()
+        .position(|m| m.physical_bounds.contains_point(cx, cy))
+    {
         return idx;
     }
     monitors

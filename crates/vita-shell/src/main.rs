@@ -13,12 +13,14 @@ use surfaces::settings::SettingsTab;
 use tracing_subscriber::EnvFilter;
 use vita_core::{ShellConfig, ShellPreset};
 use vita_win32::{
-    TaskbarGuard, restore_all_taskbars, restore_saved_workareas, run_watchdog, spawn_watchdog,
+    TaskbarGuard, restore_all_taskbars, restore_saved_workareas, run_restart_wait, run_watchdog,
+    spawn_watchdog,
 };
 
 #[derive(Debug)]
 enum CliCommand {
     Watchdog(u32),
+    RestartWait(u32),
     RestoreTaskbar,
     Run {
         companion_mode: bool,
@@ -63,6 +65,13 @@ fn parse_cli() -> CliCommand {
                     && let Ok(pid) = pid_str.parse::<u32>()
                 {
                     return CliCommand::Watchdog(pid);
+                }
+            }
+            "--restart-wait" => {
+                if let Some(pid_str) = args.get(i + 1)
+                    && let Ok(pid) = pid_str.parse::<u32>()
+                {
+                    return CliCommand::RestartWait(pid);
                 }
             }
             "--restore-taskbar" => return CliCommand::RestoreTaskbar,
@@ -160,6 +169,10 @@ fn main() -> iced::Result {
     match parse_cli() {
         CliCommand::Watchdog(parent_pid) => {
             run_watchdog(parent_pid);
+            Ok(())
+        }
+        CliCommand::RestartWait(parent_pid) => {
+            run_restart_wait(parent_pid);
             Ok(())
         }
         CliCommand::RestoreTaskbar => {

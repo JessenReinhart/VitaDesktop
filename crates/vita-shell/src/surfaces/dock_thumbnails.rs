@@ -9,9 +9,7 @@ use iced::{
     Alignment, Background, Border, Color, ContentFit, Element, Length, Padding, Shadow, Vector,
 };
 use std::collections::HashMap;
-use vita_core::{
-    DockItem, LogicalRect, PhysicalRect, RunningWindow, SurfaceMaterial, ThemeTokens,
-};
+use vita_core::{DockItem, LogicalRect, PhysicalRect, RunningWindow, SurfaceMaterial, ThemeTokens};
 
 pub const MAX_PREVIEW_WINDOWS: usize = 8;
 pub const MAX_PREVIEW_COLS: usize = 4;
@@ -157,7 +155,8 @@ pub fn view<'a, Msg: Clone + 'a>(
     on_focus: impl Fn(isize) -> Msg + 'a,
     on_close: impl Fn(isize) -> Msg + 'a,
 ) -> Element<'a, Msg> {
-    let popover_w = (layout.window_width - SHADOW_GUTTER * 2.0).max(POPOVER_PADDING * 2.0 + CARD_WIDTH);
+    let popover_w =
+        (layout.window_width - SHADOW_GUTTER * 2.0).max(POPOVER_PADDING * 2.0 + CARD_WIDTH);
     let popover_h =
         (layout.window_height - SHADOW_GUTTER * 2.0).max(POPOVER_PADDING * 2.0 + CARD_HEIGHT);
 
@@ -354,15 +353,17 @@ fn build_cutout_backdrop<'a, Msg: 'a>(
         container(Space::new())
             .width(popover_w)
             .height(bottom_band_h)
-            .style(move |_| solid_band_style(
-                card_bg,
-                Radius {
-                    top_left: 0.0,
-                    top_right: 0.0,
-                    bottom_left: r16,
-                    bottom_right: r16,
-                },
-            )),
+            .style(move |_| {
+                solid_band_style(
+                    card_bg,
+                    Radius {
+                        top_left: 0.0,
+                        top_right: 0.0,
+                        bottom_left: r16,
+                        bottom_right: r16,
+                    },
+                )
+            }),
     );
 
     container(mask_col)
@@ -556,7 +557,9 @@ fn build_fallback_or_minimized_viewport<'a, Msg: 'a>(
         .style({
             let tokens = *tokens;
             move |_| container::Style {
-                background: Some(Background::Color(color(tokens.surface_base.with_alpha(0.92)))),
+                background: Some(Background::Color(color(
+                    tokens.surface_base.with_alpha(0.92),
+                ))),
                 border: Border {
                     color: color(tokens.border_control),
                     width: 1.0,
@@ -680,9 +683,8 @@ mod tests {
     #[test]
     fn compute_preview_layout_produces_non_overlapping_inbounds_slots() {
         for count in [1_usize, 2, 4, 6] {
-            let windows: Vec<RunningWindow> = (1..=count)
-                .map(|idx| sample_window(idx as isize))
-                .collect();
+            let windows: Vec<RunningWindow> =
+                (1..=count).map(|idx| sample_window(idx as isize)).collect();
 
             for dpi in [1.0_f32, 1.5_f32] {
                 let layout = compute_preview_layout(&windows, dpi);

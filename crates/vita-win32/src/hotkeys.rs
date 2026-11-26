@@ -80,7 +80,9 @@ impl HotkeyGuard {
                     {
                         if msg.message == WM_HOTKEY {
                             let ev = match msg.wParam.0 as i32 {
-                                HOTKEY_EMERGENCY_RESTORE => Some(HotkeyEvent::EmergencyRestoreTaskbar),
+                                HOTKEY_EMERGENCY_RESTORE => {
+                                    Some(HotkeyEvent::EmergencyRestoreTaskbar)
+                                }
                                 HOTKEY_TOGGLE_LAUNCHER => Some(HotkeyEvent::ToggleLauncher),
                                 HOTKEY_TOGGLE_SPACES => Some(HotkeyEvent::ToggleSpaces),
                                 _ => None,
@@ -114,7 +116,12 @@ impl Drop for HotkeyGuard {
         self.stop.store(true, Ordering::Release);
         if self.thread_id != 0 {
             unsafe {
-                let _ = PostThreadMessageW(self.thread_id, WM_QUIT, Default::default(), Default::default());
+                let _ = PostThreadMessageW(
+                    self.thread_id,
+                    WM_QUIT,
+                    Default::default(),
+                    Default::default(),
+                );
             }
         }
         if let Some(handle) = self.thread.take() {

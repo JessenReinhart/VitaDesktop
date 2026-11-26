@@ -84,12 +84,7 @@ pub fn view<'a>(
                 .width(Length::Fill);
 
                 if let Some(sc) = &item.shortcut {
-                    content = content.push(
-                        text(sc)
-                            .font(FONT_MONO)
-                            .size(11)
-                            .color(muted_fg),
-                    );
+                    content = content.push(text(sc).font(FONT_MONO).size(11).color(muted_fg));
                 }
 
                 if item.enabled
@@ -103,11 +98,7 @@ pub fn view<'a>(
                             .on_press(Message::GlobalMenuInvoke(action)),
                     );
                 } else {
-                    list = list.push(
-                        container(content)
-                            .width(Length::Fill)
-                            .padding([6, 10]),
-                    );
+                    list = list.push(container(content).width(Length::Fill).padding([6, 10]));
                 }
             }
 

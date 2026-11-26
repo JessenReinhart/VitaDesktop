@@ -72,12 +72,7 @@ fn set_monitor_workarea(rect: PhysicalRect, broadcast: bool) {
         SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0)
     };
     unsafe {
-        let _ = SystemParametersInfoW(
-            SPI_SETWORKAREA,
-            0,
-            Some((&raw mut rc).cast()),
-            flags,
-        );
+        let _ = SystemParametersInfoW(SPI_SETWORKAREA, 0, Some((&raw mut rc).cast()), flags);
     }
 }
 
@@ -88,7 +83,6 @@ pub fn restore_saved_workareas() {
         clear_workarea_backup();
     }
 }
-
 
 /// Returns the work-area top edge (physical px, relative to the monitor top) for a Top Bar of
 /// `top_px`, optionally tucked upward by `tuck_px` so a maximized window's own title bar hides
@@ -147,8 +141,8 @@ impl WorkAreaGuard {
                     .all(|(m, b)| m.physical_bounds.intersects(*b))
         });
 
-        let original_workareas = saved
-            .unwrap_or_else(|| monitors.iter().map(|m| m.physical_workarea).collect());
+        let original_workareas =
+            saved.unwrap_or_else(|| monitors.iter().map(|m| m.physical_workarea).collect());
 
         Self {
             active,

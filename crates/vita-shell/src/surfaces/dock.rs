@@ -197,7 +197,9 @@ pub fn view<'a>(
     let bottom_gap = bottom_margin(config);
     let h_pad = pill_horizontal_padding(config);
     let util_w = utility_cluster_width(config);
-    let icon_bottom_pad = ((pill_h - (base_size + 6.0)) * 0.5).floor().clamp(1.0, 16.0);
+    let icon_bottom_pad = ((pill_h - (base_size + 6.0)) * 0.5)
+        .floor()
+        .clamp(1.0, 16.0);
 
     let has_utility = util_w > 0.0;
     let mut pill_inner = row![].spacing(10).align_y(Alignment::End);
@@ -212,10 +214,7 @@ pub fn view<'a>(
                 row![
                     icons::icon(icons::LAYERS, 15.0, icon_fg),
                     column![
-                        text("SPACE")
-                            .font(FONT_SEMIBOLD)
-                            .size(9)
-                            .color(muted_fg),
+                        text("SPACE").font(FONT_SEMIBOLD).size(9).color(muted_fg),
                         text(active_space_name)
                             .font(FONT_MEDIUM)
                             .size(12)
@@ -335,8 +334,11 @@ pub fn view<'a>(
     let slide_y = (1.0 - reveal) * (pill_h + bottom_gap) * 0.55;
 
     container(
-        column![dock_stack, Space::new().height((bottom_gap - slide_y).max(0.0))]
-            .align_x(Alignment::Center),
+        column![
+            dock_stack,
+            Space::new().height((bottom_gap - slide_y).max(0.0))
+        ]
+        .align_x(Alignment::Center),
     )
     .width(Length::Fill)
     .height(Length::Fill)

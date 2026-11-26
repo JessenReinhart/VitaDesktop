@@ -65,15 +65,8 @@ pub fn set_launch_at_login(enabled: bool) -> io::Result<()> {
             .collect();
         // REG_SZ must be null-terminated.
         bytes.extend_from_slice(&[0, 0]);
-        let status = unsafe {
-            RegSetValueExW(
-                key,
-                PCWSTR(value_name.as_ptr()),
-                None,
-                REG_SZ,
-                Some(&bytes),
-            )
-        };
+        let status =
+            unsafe { RegSetValueExW(key, PCWSTR(value_name.as_ptr()), None, REG_SZ, Some(&bytes)) };
         if status.is_err() {
             Err(io::Error::from_raw_os_error(status.0 as i32))
         } else {

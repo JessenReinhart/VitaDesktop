@@ -38,7 +38,10 @@ pub enum Message {
 
     // Global Menu & Custom Window Decorator
     ActiveAppMenuUpdated(Option<ActiveAppMenu>),
-    OpenGlobalMenu { monitor_idx: usize, menu_index: usize },
+    OpenGlobalMenu {
+        monitor_idx: usize,
+        menu_index: usize,
+    },
     GlobalMenuInvoke(GlobalMenuAction),
     DecoratedWindowUpdated(Option<DecoratedWindowState>),
     DecoratorHeaderPressed(isize),
@@ -159,6 +162,7 @@ pub enum Message {
     SettingsToggleLaunchAtLogin,
     SettingsOpenConfigFile,
     SettingsResetDefaults,
+    SettingsRestartShell,
 
     // Shell controls
     CyclePreset,

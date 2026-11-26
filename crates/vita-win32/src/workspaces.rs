@@ -12,8 +12,8 @@ use windows::Win32::System::Registry::{
     HKEY_CURRENT_USER, RRF_RT_REG_BINARY, RRF_RT_REG_SZ, RegGetValueW,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP,
-    SendInput, VIRTUAL_KEY, VK_D, VK_LCONTROL, VK_LEFT, VK_LWIN, VK_RIGHT,
+    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, SendInput,
+    VIRTUAL_KEY, VK_D, VK_LCONTROL, VK_LEFT, VK_LWIN, VK_RIGHT,
 };
 use windows::Win32::UI::Shell::{IVirtualDesktopManager, VirtualDesktopManager};
 use windows::core::{GUID, PCWSTR};
@@ -120,10 +120,7 @@ fn default_dux_space_meta(index: usize) -> (String, String) {
             "Notes, photos & the everyday".to_string(),
         ),
         1 => ("Studio".to_string(), "Ideas in progress".to_string()),
-        2 => (
-            "Unwind".to_string(),
-            "A little room to play".to_string(),
-        ),
+        2 => ("Unwind".to_string(), "A little room to play".to_string()),
         n => (format!("Space {}", n + 1), "Focused workspace".to_string()),
     }
 }
@@ -153,9 +150,9 @@ pub fn enumerate_spaces(running_windows: &[RunningWindow]) -> Vec<SpaceInfo> {
 
     let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
     let should_uninit = hr.is_ok();
-    if let Ok(vdm) =
-        unsafe { CoCreateInstance::<_, IVirtualDesktopManager>(&VirtualDesktopManager, None, CLSCTX_ALL) }
-    {
+    if let Ok(vdm) = unsafe {
+        CoCreateInstance::<_, IVirtualDesktopManager>(&VirtualDesktopManager, None, CLSCTX_ALL)
+    } {
         for win in running_windows {
             let hwnd = HWND(win.hwnd as *mut c_void);
             if let Ok(desk_guid) = unsafe { vdm.GetWindowDesktopId(hwnd) }

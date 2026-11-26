@@ -18,7 +18,8 @@ use vita_core::NotificationLevel;
 use windows::Win32::Foundation::{FILETIME, HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::Storage::FileSystem::FileTimeToLocalFileTime;
 use windows::Win32::System::Com::{
-    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
+    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+    CoUninitialize,
 };
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Accessibility::{
@@ -195,8 +196,7 @@ impl WindowsNotificationWatcher {
                         match msg.message {
                             WM_WPN_FS_EVENT => {
                                 if fs_timer == 0 {
-                                    fs_timer =
-                                        unsafe { SetTimer(None, 0, FS_DEBOUNCE_MS, None) };
+                                    fs_timer = unsafe { SetTimer(None, 0, FS_DEBOUNCE_MS, None) };
                                 }
                             }
                             WM_WPN_TOAST_SHOW => {
@@ -214,9 +214,8 @@ impl WindowsNotificationWatcher {
                                             let _ = KillTimer(None, retry_timer);
                                         }
                                     }
-                                    retry_timer = unsafe {
-                                        SetTimer(None, 0, TOAST_RETRY_DELAY_MS, None)
-                                    };
+                                    retry_timer =
+                                        unsafe { SetTimer(None, 0, TOAST_RETRY_DELAY_MS, None) };
                                 }
                             }
                             WM_TIMER => {
@@ -353,34 +352,30 @@ fn setup_fs_watcher(tid: u32, stop: Arc<AtomicBool>) -> Option<RecommendedWatche
         return None;
     }
 
-    let mut watcher =
-        notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            if stop.load(Ordering::Acquire) {
-                return;
-            }
-            if let Ok(event) = res
-                && matches!(
-                    event.kind,
-                    EventKind::Modify(_)
-                        | EventKind::Create(_)
-                        | EventKind::Remove(_)
-                        | EventKind::Any
-                )
-            {
-                let is_wpn_file = event.paths.is_empty()
-                    || event.paths.iter().any(|p| {
-                        p.file_name()
-                            .and_then(|n| n.to_str())
-                            .is_some_and(|n| n.to_ascii_lowercase().starts_with("wpndatabase"))
-                    });
-                if is_wpn_file {
-                    unsafe {
-                        let _ = PostThreadMessageW(tid, WM_WPN_FS_EVENT, WPARAM(0), LPARAM(0));
-                    }
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        if stop.load(Ordering::Acquire) {
+            return;
+        }
+        if let Ok(event) = res
+            && matches!(
+                event.kind,
+                EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) | EventKind::Any
+            )
+        {
+            let is_wpn_file = event.paths.is_empty()
+                || event.paths.iter().any(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.to_ascii_lowercase().starts_with("wpndatabase"))
+                });
+            if is_wpn_file {
+                unsafe {
+                    let _ = PostThreadMessageW(tid, WM_WPN_FS_EVENT, WPARAM(0), LPARAM(0));
                 }
             }
-        })
-        .ok()?;
+        }
+    })
+    .ok()?;
 
     if let Err(err) = watcher.watch(&dir, RecursiveMode::NonRecursive) {
         tracing::debug!(?err, path = %dir.display(), "Failed to watch WPN directory");
@@ -409,12 +404,7 @@ unsafe extern "system" fn toast_show_proc(
     let tid = HOOK_THREAD_ID.get();
     if tid != 0 {
         unsafe {
-            let _ = PostThreadMessageW(
-                tid,
-                WM_WPN_TOAST_SHOW,
-                WPARAM(hwnd.0 as usize),
-                LPARAM(0),
-            );
+            let _ = PostThreadMessageW(tid, WM_WPN_TOAST_SHOW, WPARAM(hwnd.0 as usize), LPARAM(0));
         }
     }
 }
@@ -494,7 +484,10 @@ fn refresh_snapshot(state: &mut WatcherState, tx: &UnboundedSender<Vec<SystemNot
     }
 }
 
-fn inspect_toast_core_window(hwnd_raw: isize, uia: Option<&IUIAutomation>) -> Option<LiveToastEntry> {
+fn inspect_toast_core_window(
+    hwnd_raw: isize,
+    uia: Option<&IUIAutomation>,
+) -> Option<LiveToastEntry> {
     if hwnd_raw == 0 {
         return None;
     }
@@ -690,7 +683,12 @@ fn inspect_toast_core_window(hwnd_raw: isize, uia: Option<&IUIAutomation>) -> Op
 fn is_toast_chrome_text(s: &str) -> bool {
     matches!(
         s.to_ascii_lowercase().as_str(),
-        "dismiss" | "close" | "settings" | "see more" | "more options" | "go to notification settings"
+        "dismiss"
+            | "close"
+            | "settings"
+            | "see more"
+            | "more options"
+            | "go to notification settings"
     )
 }
 
@@ -806,10 +804,7 @@ fn find_toast_open(bytes: &[u8], from: usize) -> Option<usize> {
     while i + OPEN.len() < bytes.len() {
         if bytes[i] == b'<'
             && bytes[i..i + OPEN.len()].eq_ignore_ascii_case(OPEN)
-            && matches!(
-                bytes[i + OPEN.len()],
-                b'>' | b' ' | b'\t' | b'\r' | b'\n'
-            )
+            && matches!(bytes[i + OPEN.len()], b'>' | b' ' | b'\t' | b'\r' | b'\n')
         {
             return Some(i);
         }
@@ -1014,7 +1009,10 @@ fn decode_text_inner(raw: &str) -> String {
 }
 
 fn strip_via_prefix(text: &str) -> &str {
-    if text.get(..4).is_some_and(|p| p.eq_ignore_ascii_case("via ")) {
+    if text
+        .get(..4)
+        .is_some_and(|p| p.eq_ignore_ascii_case("via "))
+    {
         text[4..].trim()
     } else {
         text.trim()
@@ -1185,8 +1183,8 @@ fn parse_aumid_token(token: &str) -> Option<String> {
     }
 
     let pkg_base = pkg.split('_').next().unwrap_or(pkg);
-    if let Some(known) = known_app_from_identifier(pkg_base)
-        .or_else(|| known_app_from_identifier(app_part))
+    if let Some(known) =
+        known_app_from_identifier(pkg_base).or_else(|| known_app_from_identifier(app_part))
     {
         return Some(known.to_string());
     }
@@ -1507,7 +1505,8 @@ mod tests {
         let toast_two = br#"<toast scenario="urgent"><visual><binding template="ToastGeneric"><text>Security Alert</text><text>Restart required</text></binding></visual></toast>"#;
 
         let mut db_blob = Vec::new();
-        db_blob.extend_from_slice(b"\x00\x01\x02\xffMicrosoft.WindowsTerminal_8wekyb3d8bbwe!App\x00");
+        db_blob
+            .extend_from_slice(b"\x00\x01\x02\xffMicrosoft.WindowsTerminal_8wekyb3d8bbwe!App\x00");
         db_blob.extend_from_slice(toast_one);
         db_blob.extend_from_slice(b"\x00\x00\xfe\xfd<toast truncated=\"true\">broken");
         db_blob.extend_from_slice(b"\x00C:\\Program Files\\Vendor\\Code.exe\x00");

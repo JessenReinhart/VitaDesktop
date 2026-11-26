@@ -163,13 +163,7 @@ pub fn view<'a>(state: SettingsState<'a>) -> Element<'a, Message> {
 
     // Left Studio Sidebar (208px)
     let mut nav_col = column![
-        container(
-            text("STUDIO")
-                .font(FONT_SEMIBOLD)
-                .size(10)
-                .color(muted_fg)
-        )
-        .padding([2, 10])
+        container(text("STUDIO").font(FONT_SEMIBOLD).size(10).color(muted_fg)).padding([2, 10])
     ]
     .spacing(4)
     .width(Length::Fill);
@@ -276,14 +270,10 @@ pub fn view<'a>(state: SettingsState<'a>) -> Element<'a, Message> {
         SettingsTab::System => view_system(&state),
     };
 
-    let content_scroll = scrollable(
-        container(tab_body)
-            .width(Length::Fill)
-            .padding([22, 26]),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .style(calm_scrollable_style(tokens));
+    let content_scroll = scrollable(container(tab_body).width(Length::Fill).padding([22, 26]))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(calm_scrollable_style(tokens));
 
     let body_row = row![sidebar, vertical_divider, content_scroll]
         .width(Length::Fill)
@@ -562,10 +552,7 @@ fn view_appearance<'a>(state: &SettingsState<'a>) -> Element<'a, Message> {
         let active = config.surface_material == mat;
         button(
             column![
-                text(title)
-                    .font(FONT_SEMIBOLD)
-                    .size(12.5)
-                    .color(primary_fg),
+                text(title).font(FONT_SEMIBOLD).size(12.5).color(primary_fg),
                 text(desc).font(FONT_REGULAR).size(11.5).color(secondary_fg),
             ]
             .spacing(2),
@@ -608,15 +595,16 @@ fn view_appearance<'a>(state: &SettingsState<'a>) -> Element<'a, Message> {
             color(tokens.border_control)
         };
 
-        let swatch_circle = container(Space::new().width(24).height(24)).style(move |_| container::Style {
-            background: Some(Background::Color(fill)),
-            border: Border {
-                color: color(tokens.surface_elevated),
-                width: 2.0,
-                radius: Radius::from(99.0),
-            },
-            ..container::Style::default()
-        });
+        let swatch_circle =
+            container(Space::new().width(24).height(24)).style(move |_| container::Style {
+                background: Some(Background::Color(fill)),
+                border: Border {
+                    color: color(tokens.surface_elevated),
+                    width: 2.0,
+                    radius: Radius::from(99.0),
+                },
+                ..container::Style::default()
+            });
 
         let swatch_btn = button(
             container(swatch_circle)
@@ -833,10 +821,7 @@ fn view_bar_and_dock<'a>(state: &SettingsState<'a>) -> Element<'a, Message> {
         let active = config.top_bar.style == style;
         button(
             column![
-                text(title)
-                    .font(FONT_SEMIBOLD)
-                    .size(13)
-                    .color(primary_fg),
+                text(title).font(FONT_SEMIBOLD).size(13).color(primary_fg),
                 text(desc).font(FONT_REGULAR).size(11.5).color(secondary_fg),
             ]
             .spacing(3),
@@ -885,7 +870,10 @@ fn view_bar_and_dock<'a>(state: &SettingsState<'a>) -> Element<'a, Message> {
             divider(tokens),
             row![
                 column![
-                    text("Bar height").font(FONT_MEDIUM).size(13).color(primary_fg),
+                    text("Bar height")
+                        .font(FONT_MEDIUM)
+                        .size(13)
+                        .color(primary_fg),
                     text("Reserve GNOME-style top work area across all connected displays.")
                         .font(FONT_REGULAR)
                         .size(11.5)
@@ -990,7 +978,10 @@ fn view_bar_and_dock<'a>(state: &SettingsState<'a>) -> Element<'a, Message> {
             divider(tokens),
             column![
                 row![
-                    text("Icon size").font(FONT_MEDIUM).size(13).color(primary_fg),
+                    text("Icon size")
+                        .font(FONT_MEDIUM)
+                        .size(13)
+                        .color(primary_fg),
                     space::horizontal(),
                     text(format!("{icon_val} px"))
                         .font(FONT_MONO)
@@ -1008,7 +999,10 @@ fn view_bar_and_dock<'a>(state: &SettingsState<'a>) -> Element<'a, Message> {
             divider(tokens),
             column![
                 row![
-                    text("Dock height").font(FONT_MEDIUM).size(13).color(primary_fg),
+                    text("Dock height")
+                        .font(FONT_MEDIUM)
+                        .size(13)
+                        .color(primary_fg),
                     space::horizontal(),
                     text(format!("{dock_h_val} px"))
                         .font(FONT_MONO)
@@ -1031,10 +1025,7 @@ fn view_bar_and_dock<'a>(state: &SettingsState<'a>) -> Element<'a, Message> {
                         .size(13)
                         .color(primary_fg),
                     space::horizontal(),
-                    text(mag_label)
-                        .font(FONT_MONO)
-                        .size(12)
-                        .color(secondary_fg),
+                    text(mag_label).font(FONT_MONO).size(12).color(secondary_fg),
                 ]
                 .align_y(Alignment::Center),
                 slider(1.00..=1.60, mag_val, |v| {
@@ -1114,15 +1105,16 @@ fn view_bar_and_dock<'a>(state: &SettingsState<'a>) -> Element<'a, Message> {
         } else {
             color(tokens.border_control)
         };
-        let circle = container(Space::new().width(20).height(20)).style(move |_| container::Style {
-            background: Some(Background::Color(fill)),
-            border: Border {
-                color: color(tokens.surface_elevated),
-                width: 2.0,
-                radius: Radius::from(99.0),
-            },
-            ..container::Style::default()
-        });
+        let circle =
+            container(Space::new().width(20).height(20)).style(move |_| container::Style {
+                background: Some(Background::Color(fill)),
+                border: Border {
+                    color: color(tokens.surface_elevated),
+                    width: 2.0,
+                    radius: Radius::from(99.0),
+                },
+                ..container::Style::default()
+            });
         let btn = button(
             container(circle)
                 .width(26)
@@ -1278,7 +1270,10 @@ fn view_calm_zone<'a>(state: &SettingsState<'a>) -> Element<'a, Message> {
             ),
             divider(tokens),
             column![
-                text("Your name").font(FONT_MEDIUM).size(12.5).color(primary_fg),
+                text("Your name")
+                    .font(FONT_MEDIUM)
+                    .size(12.5)
+                    .color(primary_fg),
                 clean_text_input(
                     tokens,
                     "Alex",
@@ -1384,14 +1379,11 @@ fn view_system<'a>(state: &SettingsState<'a>) -> Element<'a, Message> {
     let action_btn = |label: &'static str, desc: &'static str, msg: Message, danger: bool| {
         button(
             column![
-                text(label)
-                    .font(FONT_SEMIBOLD)
-                    .size(12.5)
-                    .color(if danger {
-                        color(tokens.status_error)
-                    } else {
-                        primary_fg
-                    }),
+                text(label).font(FONT_SEMIBOLD).size(12.5).color(if danger {
+                    color(tokens.status_error)
+                } else {
+                    primary_fg
+                }),
                 text(desc).font(FONT_REGULAR).size(11).color(secondary_fg),
             ]
             .spacing(2),
@@ -1416,6 +1408,12 @@ fn view_system<'a>(state: &SettingsState<'a>) -> Element<'a, Message> {
                 "Windows Settings",
                 "Open native OS preferences",
                 Message::OpenTargetAndDismiss("ms-settings:".to_string()),
+                false,
+            ),
+            action_btn(
+                "Restart shell",
+                "Relaunch VitaDesktop (restores taskbars briefly)",
+                Message::SettingsRestartShell,
                 false,
             ),
             action_btn(
@@ -1764,7 +1762,9 @@ fn sidebar_nav_button(
         let bg = if active {
             Some(Background::Color(color(tokens.accent_soft)))
         } else if hovered {
-            Some(Background::Color(color(tokens.surface_elevated.with_alpha(0.7))))
+            Some(Background::Color(color(
+                tokens.surface_elevated.with_alpha(0.7),
+            )))
         } else {
             None
         };

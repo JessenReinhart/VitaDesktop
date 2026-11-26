@@ -7,9 +7,7 @@ use windows::Win32::Devices::Bluetooth::{
 };
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
-use windows::Win32::Media::Audio::{
-    IMMDeviceEnumerator, MMDeviceEnumerator, eMultimedia, eRender,
-};
+use windows::Win32::Media::Audio::{IMMDeviceEnumerator, MMDeviceEnumerator, eMultimedia, eRender};
 use windows::Win32::NetworkManagement::WiFi::{
     WLAN_CONNECTION_ATTRIBUTES, WLAN_INTERFACE_INFO_LIST, WlanCloseHandle, WlanEnumInterfaces,
     WlanFreeMemory, WlanOpenHandle, WlanQueryInterface, wlan_interface_state_connected,
@@ -105,9 +103,8 @@ fn read_wifi(summary: &mut SystemSummary) {
     let enum_err = unsafe { WlanEnumInterfaces(client_handle, None, &mut list_ptr) };
     if enum_err == 0 && !list_ptr.is_null() {
         let count = unsafe { (*list_ptr).dwNumberOfItems } as usize;
-        let items = unsafe {
-            std::slice::from_raw_parts((*list_ptr).InterfaceInfo.as_ptr(), count)
-        };
+        let items =
+            unsafe { std::slice::from_raw_parts((*list_ptr).InterfaceInfo.as_ptr(), count) };
         for iface in items {
             if iface.isState == wlan_interface_state_connected {
                 summary.wifi_connected = true;

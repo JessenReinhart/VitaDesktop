@@ -330,9 +330,7 @@ impl ThemeTokens {
         let (surface_topbar, surface_dock) = match (is_dark, material) {
             (false, SurfaceMaterial::Matte) => (PEARL_50, PEARL_50),
             (true, SurfaceMaterial::Matte) => (INK_950, INK_950),
-            (false, SurfaceMaterial::Frosted) => {
-                (WHITE.with_alpha(0.84), WHITE.with_alpha(0.82))
-            }
+            (false, SurfaceMaterial::Frosted) => (WHITE.with_alpha(0.84), WHITE.with_alpha(0.82)),
             (true, SurfaceMaterial::Frosted) => {
                 (INK_950.with_alpha(0.78), INK_950.with_alpha(0.76))
             }
@@ -374,13 +372,18 @@ impl ThemeTokens {
         };
 
         // Pick dark or light text on accent background automatically for >= 4.5:1 contrast.
-        let text_on_accent = if accent_primary.contrast_ratio(INK_950) >= accent_primary.contrast_ratio(WHITE) {
-            INK_950
-        } else {
-            WHITE
-        };
+        let text_on_accent =
+            if accent_primary.contrast_ratio(INK_950) >= accent_primary.contrast_ratio(WHITE) {
+                INK_950
+            } else {
+                WHITE
+            };
 
-        let accent_warm = if is_dark { TERRACOTTA_DARK } else { TERRACOTTA_LIGHT };
+        let accent_warm = if is_dark {
+            TERRACOTTA_DARK
+        } else {
+            TERRACOTTA_LIGHT
+        };
         let accent_soft = accent_swatch.with_alpha(if is_dark { 0.20 } else { 0.16 });
         let border_focus = if is_dark { IRIS_300 } else { IRIS_700 };
 
@@ -407,9 +410,17 @@ impl ThemeTokens {
             accent_soft,
             dock_dot_focused: accent_warm,
             dock_dot_running: if is_dark { PEARL_300 } else { INK_500 },
-            status_error: if is_dark { TERRACOTTA_DARK } else { CORAL_LIGHT_TEXT },
+            status_error: if is_dark {
+                TERRACOTTA_DARK
+            } else {
+                CORAL_LIGHT_TEXT
+            },
             status_caution: if is_dark { BUTTER } else { AMBER_LIGHT_TEXT },
-            status_success: if is_dark { SAGE_DARK_TEXT } else { SAGE_LIGHT_TEXT },
+            status_success: if is_dark {
+                SAGE_DARK_TEXT
+            } else {
+                SAGE_LIGHT_TEXT
+            },
             shadow_color: if is_dark {
                 RgbaColor::rgba(0.02, 0.03, 0.08, 0.42)
             } else {
@@ -439,8 +450,16 @@ impl ThemeTokens {
             return *other;
         }
         Self {
-            is_dark: if t >= 0.5 { other.is_dark } else { self.is_dark },
-            material: if t >= 0.5 { other.material } else { self.material },
+            is_dark: if t >= 0.5 {
+                other.is_dark
+            } else {
+                self.is_dark
+            },
+            material: if t >= 0.5 {
+                other.material
+            } else {
+                self.material
+            },
             high_contrast: if t >= 0.5 {
                 other.high_contrast
             } else {
@@ -543,7 +562,8 @@ mod tests {
                         "Expected >= 3.0:1 focus contrast for {mode:?}/{accent:?}, got {focus_ratio:.2}"
                     );
 
-                    let on_accent_ratio = tokens.text_on_accent.contrast_ratio(tokens.accent_primary);
+                    let on_accent_ratio =
+                        tokens.text_on_accent.contrast_ratio(tokens.accent_primary);
                     assert!(
                         on_accent_ratio >= 4.5,
                         "Expected >= 4.5:1 on-accent contrast for {mode:?}/{accent:?}, got {on_accent_ratio:.2}"

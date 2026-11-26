@@ -5,11 +5,7 @@ pub fn classify_app_category(name: &str, aumid: &str) -> AppCategory {
     let n = name.to_ascii_lowercase();
     let a = aumid.to_ascii_lowercase();
 
-    let matches_any = |needles: &[&str]| {
-        needles
-            .iter()
-            .any(|k| n.contains(k) || a.contains(k))
-    };
+    let matches_any = |needles: &[&str]| needles.iter().any(|k| n.contains(k) || a.contains(k));
 
     if matches_any(&[
         "visual studio",
@@ -32,21 +28,8 @@ pub fn classify_app_category(name: &str, aumid: &str) -> AppCategory {
     ]) {
         AppCategory::Developer
     } else if matches_any(&[
-        "edge",
-        "chrome",
-        "firefox",
-        "brave",
-        "opera",
-        "mail",
-        "outlook",
-        "teams",
-        "discord",
-        "slack",
-        "telegram",
-        "whatsapp",
-        "zoom",
-        "browser",
-        "store",
+        "edge", "chrome", "firefox", "brave", "opera", "mail", "outlook", "teams", "discord",
+        "slack", "telegram", "whatsapp", "zoom", "browser", "store",
     ]) {
         AppCategory::Internet
     } else if matches_any(&[
@@ -218,8 +201,11 @@ pub fn filter_and_sort_apps<'a>(
         .collect();
 
     scored.sort_by(|(sa, a), (sb, b)| {
-        sb.cmp(sa)
-            .then_with(|| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()))
+        sb.cmp(sa).then_with(|| {
+            a.name
+                .to_ascii_lowercase()
+                .cmp(&b.name.to_ascii_lowercase())
+        })
     });
 
     scored.into_iter().map(|(_, app)| app).collect()
@@ -242,7 +228,10 @@ mod tests {
     #[test]
     fn fuzzy_ranks_exact_prefix_word_and_subsequence_properly() {
         let apps = vec![
-            mk("Windows Terminal", "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App"),
+            mk(
+                "Windows Terminal",
+                "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App",
+            ),
             mk("Calculator", "Microsoft.WindowsCalculator!App"),
             mk("Visual Studio Code", "Microsoft.VisualStudioCode"),
             mk("Character Map", "charmap.exe"),

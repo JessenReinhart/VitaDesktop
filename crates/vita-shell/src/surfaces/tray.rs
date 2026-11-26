@@ -25,8 +25,8 @@ pub fn estimate_height(count: usize) -> f32 {
         194.0
     } else {
         let visible = count.min(MAX_VISIBLE_ROWS);
-        let rows_h = (visible as f32) * ROW_HEIGHT
-            + (visible.saturating_sub(1) as f32) * ROW_SPACING;
+        let rows_h =
+            (visible as f32) * ROW_HEIGHT + (visible.saturating_sub(1) as f32) * ROW_SPACING;
         68.0 + rows_h
     };
     body_h + SHADOW_GUTTER * 2.0

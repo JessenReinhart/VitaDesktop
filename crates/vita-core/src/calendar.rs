@@ -137,13 +137,21 @@ impl CalendarStore {
 /// Returns `(year, month)` for the month preceding `(year, month)`, wrapping Jan -> Dec.
 pub fn prev_month(year: i32, month: u32) -> (i32, u32) {
     let m = month.clamp(1, 12);
-    if m == 1 { (year - 1, 12) } else { (year, m - 1) }
+    if m == 1 {
+        (year - 1, 12)
+    } else {
+        (year, m - 1)
+    }
 }
 
 /// Returns `(year, month)` for the month following `(year, month)`, wrapping Dec -> Jan.
 pub fn next_month(year: i32, month: u32) -> (i32, u32) {
     let m = month.clamp(1, 12);
-    if m == 12 { (year + 1, 1) } else { (year, m + 1) }
+    if m == 12 {
+        (year + 1, 1)
+    } else {
+        (year, m + 1)
+    }
 }
 
 /// Builds a fixed 42-cell (6 weeks x 7 days) grid for `(year, month)` including leading and trailing dates.

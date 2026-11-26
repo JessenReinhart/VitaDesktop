@@ -446,7 +446,10 @@ impl ShellConfig {
 }
 
 /// Watches `config.toml` parent directory and calls `on_reload` after debouncing writes.
-pub fn spawn_config_watcher<F>(path: PathBuf, mut on_reload: F) -> notify::Result<RecommendedWatcher>
+pub fn spawn_config_watcher<F>(
+    path: PathBuf,
+    mut on_reload: F,
+) -> notify::Result<RecommendedWatcher>
 where
     F: FnMut(ShellConfig) + Send + 'static,
 {
@@ -513,8 +516,9 @@ mod tests {
         assert_eq!(cfg, read_back);
 
         // Partial legacy TOML deserializes cleanly with defaults for new fields.
-        let legacy: ShellConfig = toml::from_str("preset = \"HorizonDark\"\nhide_native_taskbar = true\n")
-            .expect("parse legacy config");
+        let legacy: ShellConfig =
+            toml::from_str("preset = \"HorizonDark\"\nhide_native_taskbar = true\n")
+                .expect("parse legacy config");
         assert!(legacy.top_bar.show_global_menu);
         assert!(!legacy.startup.launch_at_login);
         assert_eq!(legacy.dock.visibility, DockVisibility::IntelliHide);

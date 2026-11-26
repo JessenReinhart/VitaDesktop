@@ -198,10 +198,7 @@ fn notification_card<'a>(
         .into()
 }
 
-fn toast_inner<'a>(
-    tokens: &'a ThemeTokens,
-    notif: &'a ToastNotification,
-) -> Element<'a, Message> {
+fn toast_inner<'a>(tokens: &'a ThemeTokens, notif: &'a ToastNotification) -> Element<'a, Message> {
     let primary_fg = color(tokens.text_primary);
     let secondary_fg = color(tokens.text_secondary);
     let muted_fg = color(tokens.text_muted);

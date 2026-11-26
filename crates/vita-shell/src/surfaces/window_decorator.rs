@@ -176,18 +176,16 @@ pub fn render_window_controls<'a>(
             let pad = if compact { [6, 12] } else { [4, 6] };
             let min_w = if compact { 9.0 } else { 10.0 };
 
-            let min_glyph = container(
-                container(Space::new().width(min_w).height(1.8)).style(move |_| {
-                    container::Style {
-                        background: Some(Background::Color(icon_fg)),
-                        border: Border {
-                            radius: Radius::from(1.0),
-                            ..Border::default()
-                        },
-                        ..container::Style::default()
-                    }
-                }),
-            )
+            let min_glyph = container(container(Space::new().width(min_w).height(1.8)).style(
+                move |_| container::Style {
+                    background: Some(Background::Color(icon_fg)),
+                    border: Border {
+                        radius: Radius::from(1.0),
+                        ..Border::default()
+                    },
+                    ..container::Style::default()
+                },
+            ))
             .width(sz)
             .height(sz)
             .center_x(sz)
@@ -255,8 +253,8 @@ fn traffic_dot<'a>(
         1.0,
     ));
     let diameter = if compact { 12.0 } else { 13.0 };
-    let inner = container(Space::new().width(diameter).height(diameter)).style(move |_| {
-        container::Style {
+    let inner =
+        container(Space::new().width(diameter).height(diameter)).style(move |_| container::Style {
             background: Some(Background::Color(color(dot_color))),
             border: Border {
                 color: border_c,
@@ -264,8 +262,7 @@ fn traffic_dot<'a>(
                 radius: Radius::from(99.0),
             },
             ..container::Style::default()
-        }
-    });
+        });
 
     if compact {
         let wrapped = container(inner)
@@ -316,7 +313,9 @@ fn close_pill_button(
     move |_theme, status| {
         let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
         let bg = if hovered {
-            Some(Background::Color(color(tokens.status_error.with_alpha(0.18))))
+            Some(Background::Color(color(
+                tokens.status_error.with_alpha(0.18),
+            )))
         } else {
             None
         };

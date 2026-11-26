@@ -136,7 +136,11 @@ impl DwmThumbnailHost {
 
             let (handle, prev_rect, prev_opacity) =
                 if let Some(&entry) = self.thumbnails.get(&src_hwnd) {
-                    (entry.handle, Some(entry.last_dest), Some(entry.last_opacity))
+                    (
+                        entry.handle,
+                        Some(entry.last_dest),
+                        Some(entry.last_opacity),
+                    )
                 } else {
                     let Ok(handle) = (unsafe { DwmRegisterThumbnail(dest, src) }) else {
                         continue;

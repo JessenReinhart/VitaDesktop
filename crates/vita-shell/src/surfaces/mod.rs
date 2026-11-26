@@ -1,5 +1,5 @@
-pub mod calm_zone;
 pub mod calendar;
+pub mod calm_zone;
 pub mod dock;
 pub mod dock_menu;
 pub mod dock_thumbnails;

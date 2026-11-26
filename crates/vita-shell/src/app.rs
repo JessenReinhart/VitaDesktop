@@ -1,7 +1,7 @@
 use crate::message::Message;
 use crate::style::color;
 use crate::surfaces::{
-    calm_zone, calendar, dock, dock_menu, dock_thumbnails, global_menu, launcher, notifications,
+    calendar, calm_zone, dock, dock_menu, dock_thumbnails, global_menu, launcher, notifications,
     quick_controls, settings, spaces, top_bar, tray, window_decorator,
 };
 use chrono::{DateTime, Datelike, Local, NaiveDate};
@@ -10,7 +10,9 @@ use iced::futures::Stream;
 use iced::futures::channel::mpsc as futures_mpsc;
 use iced::keyboard::{self, Key, key::Named};
 use iced::widget::{container, image, operation};
-use iced::{Color, Element, Length, Padding, Point, Size, Subscription, Task, stream, theme, window};
+use iced::{
+    Color, Element, Length, Padding, Point, Size, Subscription, Task, stream, theme, window,
+};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -53,7 +55,13 @@ pub fn set_debug_force_tuck(on: bool) {
 fn is_top_tab_browser(exe_name: &str) -> bool {
     matches!(
         exe_name.to_ascii_lowercase().as_str(),
-        "msedge.exe" | "chrome.exe" | "firefox.exe" | "brave.exe" | "vivaldi.exe" | "opera.exe" | "arc.exe"
+        "msedge.exe"
+            | "chrome.exe"
+            | "firefox.exe"
+            | "brave.exe"
+            | "vivaldi.exe"
+            | "opera.exe"
+            | "arc.exe"
     )
 }
 
@@ -407,11 +415,14 @@ impl VitaShell {
             top_bar_to_mon.insert(tb_id, idx);
             open_shell_tasks.push(open_tb.map(Message::WindowOpened));
 
-            let mut magnifier =
-                DockMagnifier::new(config.dock.magnification_scale, config.dock.max_magnify_radius);
+            let mut magnifier = DockMagnifier::new(
+                config.dock.magnification_scale,
+                config.dock.max_magnify_radius,
+            );
             magnifier.sync_slots(slot_centers.clone());
 
-            let should_open_dock = config.dock.enabled && (config.dock.all_monitors || idx == primary_idx);
+            let should_open_dock =
+                config.dock.enabled && (config.dock.all_monitors || idx == primary_idx);
             let dock_id = if should_open_dock {
                 let dock_x = logical.x + (logical.width - dock_w) * 0.5;
                 let dock_y = logical.y + logical.height - dock_h;
@@ -1023,10 +1034,10 @@ impl VitaShell {
 
                 if self.screenshot_dir.is_some() && self.open_launcher_on_boot {
                     let open_task = self.open_launcher_on(self.primary_monitor_idx);
-                    let capture_task = Task::perform(
-                        tokio::time::sleep(Duration::from_millis(750)),
-                        |_| Message::CaptureScreenshots,
-                    );
+                    let capture_task =
+                        Task::perform(tokio::time::sleep(Duration::from_millis(750)), |_| {
+                            Message::CaptureScreenshots
+                        });
                     return Task::batch([open_task, capture_task]);
                 }
                 Task::none()
@@ -1042,8 +1053,7 @@ impl VitaShell {
             }
             Message::DockFallbackThumbCaptured(hwnd, maybe_icon) => {
                 if let Some(ic) = maybe_icon {
-                    let handle =
-                        image::Handle::from_rgba(ic.width, ic.height, ic.pixels.to_vec());
+                    let handle = image::Handle::from_rgba(ic.width, ic.height, ic.pixels.to_vec());
                     self.dock_fallback_thumbs.insert(hwnd, handle);
                 }
                 Task::none()
@@ -1070,7 +1080,9 @@ impl VitaShell {
                             && !self.window_bg_cache.contains_key(&hwnd)
                             && shell.backdrop_transition.opacity() <= 0.03
                         {
-                            shell.backdrop_transition.set_active_color(fallback, instant);
+                            shell
+                                .backdrop_transition
+                                .set_active_color(fallback, instant);
                             if !instant && shell.backdrop_transition.is_active() {
                                 should_arm = true;
                             }
@@ -1147,7 +1159,11 @@ impl VitaShell {
                 let new_max = maybe_state.as_ref().map(|d| d.is_maximized);
 
                 if let Some(st) = &maybe_state {
-                    if self.decorator_icon.as_ref().is_none_or(|(h, _)| *h != st.hwnd) {
+                    if self
+                        .decorator_icon
+                        .as_ref()
+                        .is_none_or(|(h, _)| *h != st.hwnd)
+                    {
                         if let Some(ic) = &st.icon {
                             self.decorator_icon = Some((
                                 st.hwnd,
@@ -1160,7 +1176,8 @@ impl VitaShell {
 
                     if self.last_inspected_menu_hwnd != Some(st.hwnd) || prev_max != new_max {
                         self.last_inspected_menu_hwnd = Some(st.hwnd);
-                        self.global_menu_worker.inspect_window(st.hwnd, st.monitor_idx);
+                        self.global_menu_worker
+                            .inspect_window(st.hwnd, st.monitor_idx);
                     }
                 } else if self.screenshot_dir.is_none() {
                     self.last_inspected_menu_hwnd = None;
@@ -1226,8 +1243,8 @@ impl VitaShell {
                 let item_count = self.dock_items.len();
                 let base_size = self.config.dock.icon_size;
                 let reduce = self.config.accessibility.reduce_motion;
-                let hide_tip = self.dock_popover_id.is_some()
-                    && self.dock_popover_monitor_idx == mon_idx;
+                let hide_tip =
+                    self.dock_popover_id.is_some() && self.dock_popover_monitor_idx == mon_idx;
                 let hovered_idx = if let Some(shell) = self.monitor_shells.get_mut(mon_idx) {
                     let local_x = map_pointer_to_unscaled_x(
                         base_size,
@@ -1549,10 +1566,14 @@ impl VitaShell {
                     &self.launcher_query,
                     self.launcher_category,
                 );
-                let app = filtered.get(self.launcher_selected_idx).copied().or_else(|| {
-                    let per_page = (self.config.launcher.cols * self.config.launcher.rows).max(1);
-                    filtered.get(self.launcher_page * per_page).copied()
-                });
+                let app = filtered
+                    .get(self.launcher_selected_idx)
+                    .copied()
+                    .or_else(|| {
+                        let per_page =
+                            (self.config.launcher.cols * self.config.launcher.rows).max(1);
+                        filtered.get(self.launcher_page * per_page).copied()
+                    });
                 if let Some(target_app) = app {
                     launch_app_aumid(&target_app.aumid);
                     return self.close_launcher();
@@ -1576,7 +1597,9 @@ impl VitaShell {
                             target: app.aumid.clone(),
                             exe_name: exe_guess.clone(),
                         });
-                        if let Some(icon) = app.icon.clone().or_else(|| resolve_aumid_icon(&app.aumid)) {
+                        if let Some(icon) =
+                            app.icon.clone().or_else(|| resolve_aumid_icon(&app.aumid))
+                        {
                             let key = if !exe_guess.is_empty() {
                                 exe_guess.to_ascii_lowercase()
                             } else {
@@ -1694,7 +1717,9 @@ impl VitaShell {
                 Task::none()
             }
             Message::ToggleTrayOn(mon_idx) => self.toggle_tray_on(mon_idx),
-            Message::TrayIconLeftClicked(idx) => self.activate_tray_item(idx, TrayClickKind::LeftClick),
+            Message::TrayIconLeftClicked(idx) => {
+                self.activate_tray_item(idx, TrayClickKind::LeftClick)
+            }
             Message::TrayIconRightClicked(idx) => {
                 self.activate_tray_item(idx, TrayClickKind::RightClick)
             }
@@ -1760,9 +1785,7 @@ impl VitaShell {
                 let _ = self.calendar_store.save_atomic();
                 Task::none()
             }
-            Message::ToggleQuickControls => {
-                self.toggle_quick_controls_on(self.active_monitor_idx)
-            }
+            Message::ToggleQuickControls => self.toggle_quick_controls_on(self.active_monitor_idx),
             Message::ToggleQuickControlsOn(mon_idx) => self.toggle_quick_controls_on(mon_idx),
             Message::VolumeChanged(pct) => {
                 self.summary.volume_pct = pct;
@@ -1800,10 +1823,7 @@ impl VitaShell {
                 if let Some(id) = self.quick_controls_id {
                     self.apply_surface_chrome_and_bounds(id);
                     let h = quick_controls::estimate_height(&self.summary, self.power_confirm_open);
-                    return window::resize(
-                        id,
-                        Size::new(quick_controls::QUICK_CONTROLS_WIDTH, h),
-                    );
+                    return window::resize(id, Size::new(quick_controls::QUICK_CONTROLS_WIDTH, h));
                 }
                 Task::none()
             }
@@ -1971,7 +1991,11 @@ impl VitaShell {
             Message::SettingsDockIconSizeChanged(px) => {
                 self.cli_preset_locked = false;
                 let mut next = self.config.clone();
-                let old_pad = next.dock.height.saturating_sub(next.dock.icon_size).clamp(8, 28);
+                let old_pad = next
+                    .dock
+                    .height
+                    .saturating_sub(next.dock.icon_size)
+                    .clamp(8, 28);
                 let new_icon = px.clamp(28, 64);
                 next.dock.icon_size = new_icon;
                 next.dock.height = (new_icon + old_pad).clamp(36, 84);
@@ -2079,7 +2103,8 @@ impl VitaShell {
             }
             Message::SettingsToggleDecoratorMaxTopBar => {
                 let mut next = self.config.clone();
-                next.decorator.maximized_topbar_controls = !next.decorator.maximized_topbar_controls;
+                next.decorator.maximized_topbar_controls =
+                    !next.decorator.maximized_topbar_controls;
                 self.apply_new_config(next, true)
             }
             Message::SettingsToggleHideMaximizedTitlebar => {
@@ -2134,7 +2159,10 @@ impl VitaShell {
                     match spawn_watchdog() {
                         Ok(_) => self.watchdog_spawned = true,
                         Err(err) => {
-                            tracing::error!(?err, "Refusing to hide taskbar without recovery watchdog");
+                            tracing::error!(
+                                ?err,
+                                "Refusing to hide taskbar without recovery watchdog"
+                            );
                             return self.push_notification(
                                 "Taskbar Guard",
                                 "Taskbar overlay unavailable",
@@ -2192,6 +2220,20 @@ impl VitaShell {
                     NotificationLevel::Success,
                 );
                 Task::batch([sync, toast])
+            }
+            Message::SettingsRestartShell => {
+                let started = vita_win32::spawn_restart_helper().is_ok();
+                if started {
+                    self.shutdown_shell_cleanup();
+                    iced::exit()
+                } else {
+                    self.push_notification(
+                        "Restart",
+                        "Could not restart VitaDesktop",
+                        "The replacement process could not be started.",
+                        NotificationLevel::Caution,
+                    )
+                }
             }
             Message::CaptureScreenshots => {
                 let top_bar_id = self.primary_shell().top_bar_id;
@@ -2336,10 +2378,8 @@ impl VitaShell {
                         && self.active_monitor_idx == mon_idx,
                     notifications_open: self.notifications_id.is_some()
                         && self.active_monitor_idx == mon_idx,
-                    tray_open: self.tray_popover_id.is_some()
-                        && self.active_monitor_idx == mon_idx,
-                    calendar_open: self.calendar_id.is_some()
-                        && self.active_monitor_idx == mon_idx,
+                    tray_open: self.tray_popover_id.is_some() && self.active_monitor_idx == mon_idx,
+                    calendar_open: self.calendar_id.is_some() && self.active_monitor_idx == mon_idx,
                     has_unread_notifs: !self.notifications.is_empty(),
                     active_menu,
                     open_global_menu: self.open_global_menu,
@@ -2403,10 +2443,7 @@ impl VitaShell {
                 let anim = self.window_anims.get(&id);
                 let tokens = anim.map_or(&self.tokens, |a| &a.tokens);
                 if let Some(target) = &self.dock_popover_target
-                    && let Some(item) = self
-                        .dock_items
-                        .iter()
-                        .find(|i| i.id == target.dock_item_id)
+                    && let Some(item) = self.dock_items.iter().find(|i| i.id == target.dock_item_id)
                 {
                     match target.mode {
                         dock_menu::DockPopoverMode::ContextMenu => {
@@ -2532,9 +2569,10 @@ impl VitaShell {
                 let anim = self.window_anims.get(&id);
                 let tokens = anim.map_or(&self.tokens, |a| &a.tokens);
                 if let Some(st) = &self.decorated_window {
-                    let icon = self.decorator_icon.as_ref().and_then(|(h, img)| {
-                        (*h == st.hwnd).then_some(img)
-                    });
+                    let icon = self
+                        .decorator_icon
+                        .as_ref()
+                        .and_then(|(h, img)| (*h == st.hwnd).then_some(img));
                     wrap_surface_slide(
                         window_decorator::view(tokens, &self.config.decorator, st, icon),
                         anim,
@@ -2646,7 +2684,8 @@ impl VitaShell {
             (p, self.tokens.with_opacity(0.0))
         };
         if kind == SurfaceKind::DockPopover {
-            self.dwm_thumbnails.set_opacity(if instant { 255 } else { 0 });
+            self.dwm_thumbnails
+                .set_opacity(if instant { 255 } else { 0 });
         }
         self.window_anims.insert(
             id,
@@ -2933,7 +2972,8 @@ impl VitaShell {
         let w = global_menu::GLOBAL_MENU_WIDTH;
         let h = global_menu::estimate_height(self.selected_global_menu_category());
         let anchor_offset = global_menu_anchor_offset(self.config.top_bar.style, menu_index);
-        let x = (logical.x + anchor_offset).clamp(logical.x + 8.0, logical.x + logical.width - w - 8.0);
+        let x =
+            (logical.x + anchor_offset).clamp(logical.x + 8.0, logical.x + logical.width - w - 8.0);
         let y = logical.y + self.config.top_bar.height as f32 + 4.0;
 
         let (id, open_task) = window::open(window::Settings {
@@ -3200,7 +3240,9 @@ impl VitaShell {
         sync_rgba_icon_handles(
             &mut self.tray_icon_sources,
             &mut self.tray_icon_handles,
-            icons.iter().map(|item| (item.id.as_str(), item.icon.as_ref())),
+            icons
+                .iter()
+                .map(|item| (item.id.as_str(), item.icon.as_ref())),
         );
         self.tray_icons = icons;
         if let Some(id) = self.tray_popover_id {
@@ -3261,7 +3303,8 @@ impl VitaShell {
         self.calendar_draft.clear();
 
         if self.screenshot_dir.is_some() && self.calendar_store.events.is_empty() {
-            self.calendar_store.add_event(today, "Morning standup · 09:30");
+            self.calendar_store
+                .add_event(today, "Morning standup · 09:30");
             self.calendar_store
                 .add_event(today, "Review VitaDesktop sprint");
             if let Some(first_id) = self.calendar_store.events.first().map(|e| e.id) {
@@ -3333,8 +3376,12 @@ impl VitaShell {
         let min_x = logical.x + 8.0;
         let max_x = (logical.x + logical.width - width - 8.0).max(min_x);
         match self.config.top_bar.style {
-            TopBarStyle::FullWidth => (logical.x + (logical.width - width) * 0.5).clamp(min_x, max_x),
-            TopBarStyle::FloatingPills => (logical.x + logical.width - width - 48.0).clamp(min_x, max_x),
+            TopBarStyle::FullWidth => {
+                (logical.x + (logical.width - width) * 0.5).clamp(min_x, max_x)
+            }
+            TopBarStyle::FloatingPills => {
+                (logical.x + logical.width - width - 48.0).clamp(min_x, max_x)
+            }
         }
     }
 
@@ -3529,12 +3576,8 @@ impl VitaShell {
 
         let mon = self.monitor_shells[mon_idx].info.clone();
         let logical = mon.logical_bounds();
-        let center_x = dock::slot_screen_center_x(
-            &self.config,
-            logical.width,
-            self.dock_items.len(),
-            idx,
-        );
+        let center_x =
+            dock::slot_screen_center_x(&self.config, logical.width, self.dock_items.len(), idx);
         let target = dock_menu::DockPopoverTarget {
             dock_item_id: item.id.clone(),
             anchor_center_x_logical: center_x,
@@ -3554,7 +3597,8 @@ impl VitaShell {
             self.dock_popover_opened_by_hover = true;
             self.dock_hover_outside_since = None;
             self.apply_surface_chrome_and_bounds(existing_id);
-            let resize_task = window::resize(existing_id, Size::new(log_rect.width, log_rect.height));
+            let resize_task =
+                window::resize(existing_id, Size::new(log_rect.width, log_rect.height));
             let thumb_task = self.sync_dock_thumbnail_slots();
             return Task::batch([
                 close_launcher,
@@ -3672,11 +3716,9 @@ impl VitaShell {
         let b = mon.physical_bounds;
         let dpi = mon.dpi_scale;
         let dock_w_px = (self.dock_window_width * dpi).round() as i32;
-        let dock_h_px = ((dock::pill_height(&self.config)
-            + dock::bottom_margin(&self.config)
-            + 40.0)
-            * dpi)
-            .round() as i32;
+        let dock_h_px =
+            ((dock::pill_height(&self.config) + dock::bottom_margin(&self.config) + 40.0) * dpi)
+                .round() as i32;
         PhysicalRect {
             x: b.x + (b.width - dock_w_px) / 2 - 12,
             y: b.bottom() - dock_h_px,
@@ -3693,11 +3735,7 @@ impl VitaShell {
         let Some(target) = &self.dock_popover_target else {
             return false;
         };
-        let Some(item) = self
-            .dock_items
-            .iter()
-            .find(|i| i.id == target.dock_item_id)
-        else {
+        let Some(item) = self.dock_items.iter().find(|i| i.id == target.dock_item_id) else {
             return false;
         };
         let mon = self
@@ -3798,11 +3836,7 @@ impl VitaShell {
             self.dock_preview_layout = None;
             return;
         }
-        let Some(item) = self
-            .dock_items
-            .iter()
-            .find(|i| i.id == target.dock_item_id)
-        else {
+        let Some(item) = self.dock_items.iter().find(|i| i.id == target.dock_item_id) else {
             self.dock_preview_layout = None;
             return;
         };
@@ -4305,11 +4339,9 @@ impl VitaShell {
             let b = mon.physical_bounds;
             let dpi = mon.dpi_scale;
             let dock_w_px = (self.dock_window_width * dpi).round() as i32;
-            let dock_band_h_px = ((dock::pill_height(&self.config)
-                + dock::bottom_margin(&self.config)
-                + 8.0)
-                * dpi)
-                .round() as i32;
+            let dock_band_h_px =
+                ((dock::pill_height(&self.config) + dock::bottom_margin(&self.config) + 8.0) * dpi)
+                    .round() as i32;
             let dock_band_x = b.x + (b.width - dock_w_px) / 2;
             let dock_band = PhysicalRect {
                 x: dock_band_x,
@@ -4325,7 +4357,8 @@ impl VitaShell {
                 height: 5,
             };
 
-            let cursor_in_trigger = cursor.is_some_and(|(cx, cy)| trigger_strip.contains_point(cx, cy));
+            let cursor_in_trigger =
+                cursor.is_some_and(|(cx, cy)| trigger_strip.contains_point(cx, cy));
             if cursor_in_trigger {
                 self.monitor_shells[mon_idx].dock_last_trigger = Some(Instant::now());
             }
@@ -4388,7 +4421,9 @@ impl VitaShell {
                         set_window_visible(dock_hwnd, true);
                         shell.dock_hwnd_shown = true;
                     }
-                    shell.dock_reveal.set_target(if want_hide { 0.0 } else { 1.0 });
+                    shell
+                        .dock_reveal
+                        .set_target(if want_hide { 0.0 } else { 1.0 });
                     self.arm_animation();
                 }
                 if want_hide && let Some(s) = self.monitor_shells.get_mut(mon_idx) {
@@ -4444,7 +4479,11 @@ impl VitaShell {
                     targets
                         .into_iter()
                         .map(|(mon_idx, hwnd, mon)| {
-                            (mon_idx, hwnd, sample_maximized_window_bg(hwnd, &mon, top_bar_h))
+                            (
+                                mon_idx,
+                                hwnd,
+                                sample_maximized_window_bg(hwnd, &mon, top_bar_h),
+                            )
                         })
                         .collect()
                 })
@@ -4464,7 +4503,11 @@ impl VitaShell {
     fn sync_workarea_tuck(&mut self) -> Task<Message> {
         let prev_tucked = self.tucked_monitors.clone();
         let (flags, max_hwnds) = self.compute_maximized_states();
-        let height = self.config.decorator.maximized_titlebar_height.clamp(24, 44);
+        let height = self
+            .config
+            .decorator
+            .maximized_titlebar_height
+            .clamp(24, 44);
         if flags != self.tucked_monitors || height != self.tuck_height_applied {
             self.tucked_monitors = flags.clone();
             self.tuck_height_applied = height;
@@ -4512,8 +4555,7 @@ impl VitaShell {
             if let Some(hwnd) = maybe_hwnd {
                 let prev_hwnd = shell.maximized_bg_hwnd;
                 let hwnd_changed = prev_hwnd != Some(hwnd);
-                let just_tucked =
-                    !prev_tucked.get(mon_idx).copied().unwrap_or(false) && tucked_now;
+                let just_tucked = !prev_tucked.get(mon_idx).copied().unwrap_or(false) && tucked_now;
                 shell.maximized_bg_hwnd = Some(hwnd);
 
                 if self.screenshot_dir.is_some() {
@@ -4548,7 +4590,9 @@ impl VitaShell {
             } else {
                 shell.maximized_bg_hwnd = None;
                 if islands_active && debug_force && tucked_now {
-                    shell.backdrop_transition.set_active_color(fallback_bg, instant);
+                    shell
+                        .backdrop_transition
+                        .set_active_color(fallback_bg, instant);
                 } else {
                     shell.backdrop_transition.set_inactive(instant);
                 }
@@ -4913,14 +4957,10 @@ impl VitaShell {
             },
         ];
 
-        self.dock_fallback_thumbs.insert(
-            -101,
-            make_demo_window_preview([30, 34, 52], [198, 120, 86]),
-        );
-        self.dock_fallback_thumbs.insert(
-            -102,
-            make_demo_window_preview([24, 38, 48], [86, 178, 148]),
-        );
+        self.dock_fallback_thumbs
+            .insert(-101, make_demo_window_preview([30, 34, 52], [198, 120, 86]));
+        self.dock_fallback_thumbs
+            .insert(-102, make_demo_window_preview([24, 38, 48], [86, 178, 148]));
 
         self.running_windows = demo_windows;
         let _ = self.rebuild_dock_items();
@@ -4966,8 +5006,11 @@ impl VitaShell {
             shell.dock_magnifier.sync_slots(slot_centers.clone());
         }
         if resized {
-            let dock_ids: Vec<window::Id> =
-                self.monitor_shells.iter().filter_map(|s| s.dock_id).collect();
+            let dock_ids: Vec<window::Id> = self
+                .monitor_shells
+                .iter()
+                .filter_map(|s| s.dock_id)
+                .collect();
             let mut tasks = Vec::with_capacity(dock_ids.len());
             for did in dock_ids {
                 self.apply_surface_chrome_and_bounds(did);
@@ -5086,17 +5129,9 @@ impl VitaShell {
                 } else {
                     ShellWindowRole::Popover
                 };
-                configure_shell_window(
-                    hwnd_raw,
-                    role,
-                    self.tokens.is_dark,
-                    frosted,
-                );
+                configure_shell_window(hwnd_raw, role, self.tokens.is_dark, frosted);
                 if let Some(target) = &self.dock_popover_target
-                    && let Some(item) = self
-                        .dock_items
-                        .iter()
-                        .find(|i| i.id == target.dock_item_id)
+                    && let Some(item) = self.dock_items.iter().find(|i| i.id == target.dock_item_id)
                 {
                     let (_, phys_rect) = self.compute_dock_popover_geometry(mon, item, target);
                     let _ = dpi;
@@ -5326,10 +5361,13 @@ impl VitaShell {
                 let menu_idx = self.open_global_menu.map_or(0, |(_, idx)| idx);
                 let anchor_logical = global_menu_anchor_offset(self.config.top_bar.style, menu_idx);
                 let w_px = (global_menu::GLOBAL_MENU_WIDTH * dpi).round() as i32;
-                let h_px = (global_menu::estimate_height(self.selected_global_menu_category()) * dpi)
+                let h_px = (global_menu::estimate_height(self.selected_global_menu_category())
+                    * dpi)
                     .round() as i32;
-                let x_px = (bounds.x + (anchor_logical * dpi).round() as i32)
-                    .clamp(bounds.x + (8.0 * dpi).round() as i32, bounds.right() - w_px - (8.0 * dpi).round() as i32);
+                let x_px = (bounds.x + (anchor_logical * dpi).round() as i32).clamp(
+                    bounds.x + (8.0 * dpi).round() as i32,
+                    bounds.right() - w_px - (8.0 * dpi).round() as i32,
+                );
                 let y_px =
                     bounds.y + ((self.config.top_bar.height as f32 + 4.0) * dpi).round() as i32;
                 reposition_window_physical(
@@ -5401,9 +5439,7 @@ fn map_pointer_to_unscaled_x(
         return local_x;
     }
     let unscaled_total = count as f32 * slot_w + (count - 1) as f32 * 6.0;
-    let scaled_icons: f32 = (0..count)
-        .map(|i| base * magnifier.scale_at(i) + 8.0)
-        .sum();
+    let scaled_icons: f32 = (0..count).map(|i| base * magnifier.scale_at(i) + 8.0).sum();
     let current_total = scaled_icons + (count - 1) as f32 * 6.0;
     if current_total <= 1.0 {
         local_x
@@ -5562,8 +5598,7 @@ fn dock_popover_bounds(
     let max_x = (logical.x + logical.width - pop_w - 8.0).max(min_x);
     let x = (logical.x + anchor_center_x_logical - pop_w * 0.5).clamp(min_x, max_x);
     let min_y = logical.y + config.top_bar.height as f32 + 4.0;
-    let y = (logical.y
-        + logical.height
+    let y = (logical.y + logical.height
         - dock::pill_height(config)
         - dock::bottom_margin(config)
         - pop_h
@@ -6164,7 +6199,11 @@ mod tests {
         assert_ne!(handles.get("b").expect("handle b").id(), orig_handle_b);
 
         // Removing an item prunes its cached handle.
-        sync_rgba_icon_handles(&mut sources, &mut handles, [("a", Some(&icon_a_clone))].into_iter());
+        sync_rgba_icon_handles(
+            &mut sources,
+            &mut handles,
+            [("a", Some(&icon_a_clone))].into_iter(),
+        );
         assert!(handles.contains_key("a"));
         assert!(!handles.contains_key("b"));
     }

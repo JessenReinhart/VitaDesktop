@@ -2,7 +2,8 @@ use iced::Color;
 use iced::widget::svg::{self, Handle, Svg};
 
 pub fn vita_mark<'a>() -> Svg<'a> {
-    let handle = Handle::from_memory(include_bytes!("../../../assets/icons/vita-mark.svg").as_slice());
+    let handle =
+        Handle::from_memory(include_bytes!("../../../assets/icons/vita-mark.svg").as_slice());
     Svg::new(handle).width(20).height(20)
 }
 
