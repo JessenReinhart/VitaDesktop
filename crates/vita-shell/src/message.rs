@@ -163,6 +163,8 @@ pub enum Message {
     SettingsOpenConfigFile,
     SettingsResetDefaults,
     SettingsRestartShell,
+    SettingsHotReload,
+    HotReloadChecked(Result<(), String>),
 
     // Shell controls
     CyclePreset,

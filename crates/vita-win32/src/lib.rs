@@ -48,7 +48,10 @@ pub use tray::{
     TrayClickKind, TrayIconInfo, TrayTracker, activate_tray_icon, enumerate_tray_icons,
     refresh_tray_icons,
 };
-pub use watchdog::{run_restart_wait, run_watchdog, spawn_restart_helper, spawn_watchdog};
+pub use watchdog::{
+    run_hot_reload_wait, run_restart_wait, run_watchdog, spawn_hot_reload_helper,
+    spawn_restart_helper, spawn_watchdog, validate_release_build,
+};
 pub use windows::{
     WindowTracker, close_window, enumerate_running_windows, focus_or_toggle_window, launch_target,
     resolve_pinned_app_icon,

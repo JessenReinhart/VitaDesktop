@@ -68,6 +68,7 @@ pub struct SettingsState<'a> {
     pub installed_app_count: usize,
     pub active_tab: SettingsTab,
     pub config_path: &'a str,
+    pub hot_reload_checking: bool,
 }
 
 pub fn view<'a>(state: SettingsState<'a>) -> Element<'a, Message> {
@@ -1347,6 +1348,7 @@ fn view_calm_zone<'a>(state: &SettingsState<'a>) -> Element<'a, Message> {
 fn view_system<'a>(state: &SettingsState<'a>) -> Element<'a, Message> {
     let tokens = state.tokens;
     let config = state.config;
+    let hot_reload_checking = state.hot_reload_checking;
     let primary_fg = color(tokens.text_primary);
     let secondary_fg = color(tokens.text_secondary);
     let b = state.primary_monitor.physical_bounds;
@@ -1376,8 +1378,8 @@ fn view_system<'a>(state: &SettingsState<'a>) -> Element<'a, Message> {
         .into(),
     );
 
-    let action_btn = |label: &'static str, desc: &'static str, msg: Message, danger: bool| {
-        button(
+    let action_btn = |label: String, desc: String, msg: Option<Message>, danger: bool| {
+        let mut btn = button(
             column![
                 text(label).font(FONT_SEMIBOLD).size(12.5).color(if danger {
                     color(tokens.status_error)
@@ -1390,8 +1392,11 @@ fn view_system<'a>(state: &SettingsState<'a>) -> Element<'a, Message> {
         )
         .width(Length::FillPortion(1))
         .padding([10, 12])
-        .style(surface_card_button(tokens, false, tokens.r12))
-        .on_press(msg)
+        .style(surface_card_button(tokens, false, tokens.r12));
+        if let Some(msg) = msg {
+            btn = btn.on_press(msg);
+        }
+        btn
     };
 
     let actions_card = section_card(
@@ -1399,27 +1404,42 @@ fn view_system<'a>(state: &SettingsState<'a>) -> Element<'a, Message> {
         "Configuration & tools",
         row![
             action_btn(
-                "Open config.toml",
-                "Edit preferences in your editor",
-                Message::SettingsOpenConfigFile,
+                "Open config.toml".to_string(),
+                "Edit preferences in your editor".to_string(),
+                Some(Message::SettingsOpenConfigFile),
                 false,
             ),
             action_btn(
-                "Windows Settings",
-                "Open native OS preferences",
-                Message::OpenTargetAndDismiss("ms-settings:".to_string()),
+                "Windows Settings".to_string(),
+                "Open native OS preferences".to_string(),
+                Some(Message::OpenTargetAndDismiss("ms-settings:".to_string())),
                 false,
             ),
             action_btn(
-                "Restart shell",
-                "Relaunch VitaDesktop (restores taskbars briefly)",
-                Message::SettingsRestartShell,
+                "Restart shell".to_string(),
+                "Relaunch VitaDesktop (restores taskbars briefly)".to_string(),
+                Some(Message::SettingsRestartShell),
                 false,
             ),
             action_btn(
-                "Reset defaults",
-                "Restore Horizon Light defaults",
-                Message::SettingsResetDefaults,
+                if hot_reload_checking {
+                    "Checking…".to_string()
+                } else {
+                    "Rebuild & restart".to_string()
+                },
+                if hot_reload_checking {
+                    "Validating source before restart"
+                } else {
+                    "Compile current source, then restart VitaDesktop"
+                }
+                .to_string(),
+                (!hot_reload_checking).then_some(Message::SettingsHotReload),
+                false,
+            ),
+            action_btn(
+                "Reset defaults".to_string(),
+                "Restore Horizon Light defaults".to_string(),
+                Some(Message::SettingsResetDefaults),
                 true,
             ),
         ]

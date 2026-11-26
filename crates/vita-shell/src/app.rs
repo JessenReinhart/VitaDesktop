@@ -244,6 +244,7 @@ pub struct VitaShell {
     settings_id: Option<window::Id>,
     settings_tab: settings::SettingsTab,
     settings_positioned: bool,
+    hot_reload_checking: bool,
     global_menu_id: Option<window::Id>,
     open_global_menu: Option<(usize, usize)>,
     global_menu_opened_at: Option<Instant>,
@@ -619,6 +620,7 @@ impl VitaShell {
             settings_id: None,
             settings_tab: initial_settings_tab,
             settings_positioned: false,
+            hot_reload_checking: false,
             global_menu_id: None,
             open_global_menu: None,
             global_menu_opened_at: None,
@@ -2235,6 +2237,58 @@ impl VitaShell {
                     )
                 }
             }
+            Message::SettingsHotReload => {
+                if self.hot_reload_checking {
+                    return Task::none();
+                }
+                self.hot_reload_checking = true;
+                let notification = self.push_notification(
+                    "Hot reload",
+                    "Checking release build",
+                    "Validating the current source before restarting VitaDesktop.",
+                    NotificationLevel::Info,
+                );
+                let validation = Task::perform(
+                    tokio::task::spawn_blocking(|| {
+                        let workspace = std::env::current_exe()
+                            .ok()
+                            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                            .and_then(|d| d.parent().map(|d| d.to_path_buf()))
+                            .and_then(|d| d.parent().map(|d| d.to_path_buf()))
+                            .ok_or_else(|| "Could not locate the repo root".to_string())?;
+                        vita_win32::validate_release_build(&workspace)
+                    }),
+                    |handle| match handle {
+                        Ok(result) => Message::HotReloadChecked(result),
+                        Err(err) => Message::HotReloadChecked(Err(err.to_string())),
+                    },
+                );
+                Task::batch([notification, validation])
+            }
+            Message::HotReloadChecked(result) => {
+                self.hot_reload_checking = false;
+                match result {
+                    Ok(()) => {
+                        if vita_win32::spawn_hot_reload_helper().is_ok() {
+                            self.shutdown_shell_cleanup();
+                            iced::exit()
+                        } else {
+                            self.push_notification(
+                                "Hot reload",
+                                "Could not start hot reload",
+                                "The helper process could not be started.",
+                                NotificationLevel::Caution,
+                            )
+                        }
+                    }
+                    Err(err) => self.push_notification(
+                        "Hot reload",
+                        "Release check failed",
+                        format!("Fix compile errors first. {err}"),
+                        NotificationLevel::Caution,
+                    ),
+                }
+            }
             Message::CaptureScreenshots => {
                 let top_bar_id = self.primary_shell().top_bar_id;
                 let mut tasks = vec![
@@ -2558,6 +2612,7 @@ impl VitaShell {
                 installed_app_count: self.installed_apps.len(),
                 active_tab: self.settings_tab,
                 config_path: &self.config_path_str,
+                hot_reload_checking: self.hot_reload_checking,
             }),
             Some(SurfaceKind::GlobalMenu) => {
                 let anim = self.window_anims.get(&id);

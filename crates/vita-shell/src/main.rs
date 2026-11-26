@@ -21,6 +21,7 @@ use vita_win32::{
 enum CliCommand {
     Watchdog(u32),
     RestartWait(u32),
+    HotReloadWait(u32),
     RestoreTaskbar,
     Run {
         companion_mode: bool,
@@ -72,6 +73,13 @@ fn parse_cli() -> CliCommand {
                     && let Ok(pid) = pid_str.parse::<u32>()
                 {
                     return CliCommand::RestartWait(pid);
+                }
+            }
+            "--hot-reload-wait" => {
+                if let Some(pid_str) = args.get(i + 1)
+                    && let Ok(pid) = pid_str.parse::<u32>()
+                {
+                    return CliCommand::HotReloadWait(pid);
                 }
             }
             "--restore-taskbar" => return CliCommand::RestoreTaskbar,
@@ -173,6 +181,10 @@ fn main() -> iced::Result {
         }
         CliCommand::RestartWait(parent_pid) => {
             run_restart_wait(parent_pid);
+            Ok(())
+        }
+        CliCommand::HotReloadWait(parent_pid) => {
+            vita_win32::run_hot_reload_wait(parent_pid);
             Ok(())
         }
         CliCommand::RestoreTaskbar => {
