@@ -257,19 +257,11 @@ impl Default for WindowDecoratorConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct StartupConfig {
     /// Register VitaDesktop to auto-start at user logon.
     pub launch_at_login: bool,
-}
-
-impl Default for StartupConfig {
-    fn default() -> Self {
-        Self {
-            launch_at_login: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

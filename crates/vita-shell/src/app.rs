@@ -2161,12 +2161,12 @@ impl VitaShell {
                     }
                     Err(err) => {
                         tracing::error!(?err, "Failed to update VitaDesktop logon registration");
-                        return self.push_notification(
+                        self.push_notification(
                             "Startup",
                             "Could not change startup setting",
                             "Windows rejected the registry update. Check permissions and retry.",
                             NotificationLevel::Caution,
-                        );
+                        )
                     }
                 }
             }

@@ -14,7 +14,7 @@ Pure-Rust GPU-accelerated desktop environment and shell overlay for Windows 11, 
   - Live window tracking, `AppsFolder` icon caching, Virtual Desktop enumeration/switching, global hotkeys, audio/brightness controls, and system power actions.
 - **`crates/vita-shell`** — Multi-window, multi-monitor `iced::daemon` UI surfaces:
   - **Top Bar**: Horizon floating pills (`HorizonLight` / `HorizonDark`) or Pantheon full-width acrylic bar (`PantheonLight` / `PantheonDark`), with Global Menu strip, quick status cluster, notifications bell, and GNOME-Unite maximized window controls.
-  - **Dock**: Multi-monitor Intelli-Hide / Always-visible / Auto-hide dock with spring magnification, reducible dock pill height (`36–84 px`), optional Space/Resume utility chips, multi-window picker, and customizable background style/color/opacity/radius.
+  - **Dock**: Multi-monitor Intelli-Hide / Always-visible / Auto-hide dock with spring magnification, reducible dock pill height (`36–84 px`), optional Space/Resume utility chips, multi-window picker, customizable background style/color/opacity/radius, and a Settings toggle to show/hide the dock entirely.
   - **Launcher, Quick Controls, Spaces, Calm Zone, Notifications & Settings Studio**: Full customization persisted to `%APPDATA%\VitaDesktop\config.toml`.
 
 ## Build & Run
