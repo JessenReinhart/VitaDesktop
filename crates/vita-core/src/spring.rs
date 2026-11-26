@@ -188,9 +188,9 @@ impl BackdropTransition {
     pub fn new(fallback: RgbaColor) -> Self {
         Self {
             opacity: Spring::smooth(0.0),
-            color_r: Spring::new(fallback.r, 180.0, 26.0),
-            color_g: Spring::new(fallback.g, 180.0, 26.0),
-            color_b: Spring::new(fallback.b, 180.0, 26.0),
+            color_r: Spring::new(fallback.r, 260.0, 30.0),
+            color_g: Spring::new(fallback.g, 260.0, 30.0),
+            color_b: Spring::new(fallback.b, 260.0, 30.0),
             has_color: false,
         }
     }

@@ -4,8 +4,9 @@ use vita_core::PhysicalRect;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Dwm::{
     DWM_SYSTEMBACKDROP_TYPE, DWM_WINDOW_CORNER_PREFERENCE, DWMSBT_NONE, DWMSBT_TRANSIENTWINDOW,
-    DWMWA_EXCLUDED_FROM_PEEK, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_USE_IMMERSIVE_DARK_MODE,
-    DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWCP_ROUND, DwmSetWindowAttribute,
+    DWMWA_EXCLUDED_FROM_PEEK, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_TRANSITIONS_FORCEDISABLED,
+    DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
+    DWMWCP_ROUND, DwmSetWindowAttribute,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GWL_EXSTYLE, GetWindowLongPtrW, HWND_BOTTOM, HWND_TOP, HWND_TOPMOST, IsWindow, SW_HIDE,
@@ -113,6 +114,15 @@ pub fn configure_shell_window(
             DWMWA_SYSTEMBACKDROP_TYPE,
             (&raw const backdrop).cast(),
             size_of::<DWM_SYSTEMBACKDROP_TYPE>() as u32,
+        );
+
+        // Disable DWM's own show/hide transition fades so shell surfaces appear instantly.
+        let transitions_disabled: i32 = 1;
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_TRANSITIONS_FORCEDISABLED,
+            (&raw const transitions_disabled).cast(),
+            size_of::<i32>() as u32,
         );
 
         let _ = SetWindowPos(

@@ -2580,7 +2580,7 @@ impl VitaShell {
             || self.is_hover_window_picker_open()
         {
             subs.push(
-                iced::time::every(Duration::from_millis(80)).map(|_| Message::DockSensorTick),
+                iced::time::every(Duration::from_millis(50)).map(|_| Message::DockSensorTick),
             );
         }
 
@@ -3755,7 +3755,7 @@ impl VitaShell {
         let dwell = if self.is_hover_window_picker_open() {
             Duration::from_millis(140)
         } else {
-            Duration::from_millis(520)
+            Duration::from_millis(300)
         };
         if entered_at.elapsed() < dwell {
             return Task::none();
